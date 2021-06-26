@@ -6,6 +6,10 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #include <pmmintrin.h>
 #include <immintrin.h>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+
 #include "util.h"
 
 typedef __m256i lexbuf;
@@ -17,6 +21,7 @@ main(int argc, char** argv)
     if (argc < 2) fatal("Need a file");
     char* fname = argv[1];
 
+#if 0
     FILE* f = fopen(fname, "rb");
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
@@ -24,6 +29,23 @@ main(int argc, char** argv)
     char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
     char* p = string;
     fread(string, 1, fsize, f);
+#else
+    isize fsize;
+    char* string;
+    struct stat st;
+    const char * file_name = argv[1];
+    int fd = open(argv[1], O_RDONLY);
+
+    /* Get the size of the file. */
+    int status = fstat(fd, &st);
+    fsize = st.st_size;
+
+    string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    for (int i = fsize - nlex; i < fsize; ++i)
+        string[i] = 0;
+    fsize -= nlex;
+    char* p = string;
+#endif
 
     for (;;)
     {
@@ -40,22 +62,75 @@ main(int argc, char** argv)
             _mm256_cmpgt_epi8(b, _mm256_set1_epi8('A' - 1)),
             _mm256_cmpgt_epi8(_mm256_set1_epi8('Z' + 1), b));
         lexbuf mask4 = _mm256_cmpeq_epi8(b, _mm256_set1_epi8('_'));
+
+        lexbuf ident_start = _mm256_set1_epi16(0xFF00);
+
         lexbuf idents_mask = _mm256_or_si256(
             _mm256_or_si256(mask1, mask2),
             _mm256_or_si256(mask3, mask4));
-        lexbuf idents = _mm256_and_si256(b, idents_mask);
         lexbuf toks_mask = _mm256_andnot_si256(idents_mask, charmask);
-        lexbuf toks = _mm256_and_si256(b, toks_mask);
+
+        lexbuf idents_startmask = _mm256_cmpeq_epi16(idents_mask, ident_start);
+        lexbuf idents_mask_shed = _mm256_bslli_epi128(idents_mask, 1);
+        lexbuf idents_startmask2 = _mm256_cmpeq_epi16(idents_mask_shed, ident_start);
+
+        lexbuf nidents_mask1 = _mm256_and_si256(idents_mask, idents_startmask);
+        lexbuf nidents_mask2 = _mm256_and_si256(idents_mask_shed, idents_startmask2);
+
+        /* lexbuf idents = _mm256_and_si256(b, idents_mask); */
+        /* lexbuf toks = _mm256_and_si256(b, toks_mask); */
 
         // TODO: Maybe don't use toks_mask, just use idents mask and entire "> '
         // '" mask, then if something is not a part ident it's the ohter token.
-        u32 toks_mmask = _mm256_movemask_epi8(toks);
-        u32 idents_mmask = _mm256_movemask_epi8(idents);
+        u32 toks_mmask = (u32) _mm256_movemask_epi8(toks_mask);
+
+        u32 idents_m1 = (u32) _mm256_movemask_epi8(nidents_mask1);
+        u32 idents_m2 = (u32) _mm256_movemask_epi8(nidents_mask2);
+        u32 idents_mmask = (idents_m1 | idents_m2 >> 1)/* & (~(1 << 16))*/;
+        if (_mm256_movemask_epi8(idents_mask) & (1 << 15))
+            idents_mmask &= (~(1 << 16));
+
         u32 common_mmask = toks_mmask | idents_mmask;
-        ASSERT((toks_mmask & idents_mmask) == 0);
+        /* ASSERT((toks_mmask & idents_mmask) == 0); */
+
+        u32 s = common_mmask;
+        while (s)
+        {
+            char* x = p + __builtin_ctz(s);
+            s = (s & (s - 1));
+
+            printf("TOK: \"");
+
+            if (('a' <= x[0] && x[0] <= 'z')
+                || ('A' <= x[0] && x[0] <= 'Z')
+                || x[0] == '_'
+                || ('0' <= x[0] && x[0] <= '9')) // TODO: digit
+            {
+                for (int i = 0;
+                     ('a' <= x[i] && x[i] <= 'z') || ('A' <= x[i] && x[i] <= 'Z') || ('0' <= x[i] && x[i] <= '9') || x[i] == '_';
+                     ++i)
+                {
+                    printf("%c", x[i]);
+                }
+            }
+            else
+            {
+                printf("%c", x[0]);
+            }
+            printf("\"\n");
+
+            /* printf("TOK: \""); */
+            /* for (int i = 0; i < 8; ++i) */
+                /* printf("%c", x[i] == '\n' ? ' ' : x[i]); */
+            /* printf("\"\n"); */
+        }
 
         {
 #if 0
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+                printf("%d", i % 10);
+            printf("|\n");
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
@@ -64,6 +139,49 @@ main(int argc, char** argv)
                 else printf("%c", p[i]);
             }
             printf("|\n");
+#elif 0
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+                printf("%d", i % 10);
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (p[i] == '\n') printf(" ");
+                else if (!p[i]) printf(" ");
+                else printf("%c", p[i]);
+            }
+            printf("|\n");
+            /* printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (_mm256_movemask_epi8(ident_start1) & (1 << i)) printf("F");
+                else printf(" ");
+            }
+            printf("|\n"); */
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (idents_mmask & (1 << i)) printf("*");
+                else printf(" ");
+            }
+            printf("|\n\n");
+            /* printf("--\n");
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (_mm256_movemask_epi8(idents_mask_shed) & (1 << i))
+                    printf("%c", p[i] == '\n' ? ' ' : p[i]);
+                else printf(" ");
+            }
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (_mm256_movemask_epi8(idents_startmask2) & (1 << i)) printf("F");
+                else printf(" ");
+            }
+            printf("|\n"); */
 #elif 0
             static int q = 0;
             if (!q) printf("|");
@@ -97,76 +215,6 @@ main(int argc, char** argv)
 #endif
         }
 
-#if 0
-        {
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (p[i] >= 'a' && p[i] <= 'z') printf("%c", p[i]);
-                else if (p[i] >= 'A' && p[i] <= 'Z') printf("%c", p[i]);
-                else if (p[i] >= '0' && p[i] <= '9') printf("%c", p[i]);
-                else if (p[i] == '_') printf("%c", p[i]);
-                else printf(" ");
-            }
-            printf("|\n");
-        }
-
-        {
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                // TODO: This does not handle '@' and `
-                if (p[i] >= '!' && p[i] <= '/') printf("%c", p[i]);
-                else if (p[i] >= ':' && p[i] <= '?') printf("%c", p[i]);
-                else if (p[i] >= '[' && p[i] <= '^') printf("%c", p[i]);
-                else if (p[i] >= '{' && p[i] <= '~') printf("%c", p[i]);
-                else printf(" ");
-            }
-            printf("|\n");
-        }
-#endif
-
-#if 0
-        if (UNLIKELY(pound_found))
-        {
-            i32 lz = __builtin_ctz(pound_found);
-            u32 mask = ((1ULL << (32 - lz)) - 1) << lz;
-#if 0
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-                printf("%s", mask & (1 << i) ? "+" : " ");
-            printf("|\n");
-
-            printf("shiftback = %d\n", lz);
-#endif
-#define BIT(N) ((mask & (1 << N)) ? 0 : 0xFF)
-            __m256i masked = _mm256_set_epi8(
-                BIT(31), BIT(30), BIT(29), BIT(28),
-                BIT(27), BIT(26), BIT(25), BIT(24),
-                BIT(23), BIT(22), BIT(21), BIT(20),
-                BIT(19), BIT(18), BIT(17), BIT(16),
-                BIT(15), BIT(14), BIT(13), BIT(12),
-                BIT(11), BIT(10), BIT( 9), BIT( 8),
-                BIT( 7), BIT( 6), BIT( 5), BIT( 4),
-                BIT( 3), BIT( 2), BIT( 1), BIT( 0));
-
-            __m256i cleared = _mm256_and_si256(b, masked);
-
-            char temp[32];
-            _mm256_storeu_si256((void*) temp, cleared);
-            {
-                printf("|");
-                for (int i = 0; i < nlex; ++i)
-                {
-                    if (temp[i] == '\n') printf(" ");
-                    else if (!temp[i]) printf(" ");
-                    else printf("%c", temp[i]);
-                }
-                printf("|\n");
-            }
-        }
-#endif
-
         p += nlex;
 
         if (p - string >= fsize) break;
@@ -174,6 +222,9 @@ main(int argc, char** argv)
         /* if (_mm_movemask_epi8(b)) break; */
     }
 
+#if 0
     fclose(f);
+#else
+#endif
     return 0;
 }
