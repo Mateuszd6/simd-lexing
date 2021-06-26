@@ -1,6 +1,7 @@
 #ifndef UTIL_H_
 #define UTIL_H_
 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -105,5 +106,7 @@ fatal(char* fmt, ...)
     exit(2);
 }
 
+// TODO: Proper debug/release assert
+#define ASSERT assert
 
 #endif // UTIL_H_

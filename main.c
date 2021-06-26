@@ -28,10 +28,34 @@ main(int argc, char** argv)
     for (;;)
     {
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);
-        lexbuf pound = _mm256_set1_epi8('#');
-        u32 pound_found = _mm256_movemask_epi8(_mm256_cmpeq_epi8(b, pound));
+        lexbuf charmask = _mm256_cmpgt_epi8(b, _mm256_set1_epi8(0x20));
+        /* b = _mm256_and_si256(b, charmask); */
+        lexbuf mask1 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b, _mm256_set1_epi8('0' - 1)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8('9' + 1), b));
+        lexbuf mask2 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b, _mm256_set1_epi8('a' - 1)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8('z' + 1), b));
+        lexbuf mask3 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b, _mm256_set1_epi8('A' - 1)),
+            _mm256_cmpgt_epi8(_mm256_set1_epi8('Z' + 1), b));
+        lexbuf mask4 = _mm256_cmpeq_epi8(b, _mm256_set1_epi8('_'));
+        lexbuf idents_mask = _mm256_or_si256(
+            _mm256_or_si256(mask1, mask2),
+            _mm256_or_si256(mask3, mask4));
+        lexbuf idents = _mm256_and_si256(b, idents_mask);
+        lexbuf toks_mask = _mm256_andnot_si256(idents_mask, charmask);
+        lexbuf toks = _mm256_and_si256(b, toks_mask);
+
+        // TODO: Maybe don't use toks_mask, just use idents mask and entire "> '
+        // '" mask, then if something is not a part ident it's the ohter token.
+        u32 toks_mmask = _mm256_movemask_epi8(toks);
+        u32 idents_mmask = _mm256_movemask_epi8(idents);
+        u32 common_mmask = toks_mmask | idents_mmask;
+        ASSERT((toks_mmask & idents_mmask) == 0);
 
         {
+#if 0
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
@@ -40,8 +64,40 @@ main(int argc, char** argv)
                 else printf("%c", p[i]);
             }
             printf("|\n");
+#elif 0
+            static int q = 0;
+            if (!q) printf("|");
+            for (int i = 0; i < nlex; ++i)
+            {
+                if (p[i] == '\n') printf(" ");
+                else if (!p[i]) printf(" ");
+                else printf("%c", p[i]);
+            }
+
+            if (q) printf("|\n");
+            q = 1 - q;
+#elif 0
+            printf("|");
+            for (int i = 0; i < 16; ++i)
+            {
+                if (p[i] == '\n') printf(" ");
+                else if (!p[i]) printf(" ");
+                else printf("%c", p[i]);
+            }
+            printf("|\n");
+            printf("|");
+            for (int i = 16; i < 32; ++i)
+            {
+                if (p[i] == '\n') printf(" ");
+                else if (!p[i]) printf(" ");
+                else printf("%c", p[i]);
+            }
+            printf("|\n");
+#else
+#endif
         }
 
+#if 0
         {
             printf("|");
             for (int i = 0; i < nlex; ++i)
@@ -68,6 +124,7 @@ main(int argc, char** argv)
             }
             printf("|\n");
         }
+#endif
 
 #if 0
         if (UNLIKELY(pound_found))
@@ -113,11 +170,10 @@ main(int argc, char** argv)
         p += nlex;
 
         if (p - string >= fsize) break;
-        printf("\n");
+        /* printf("\n"); */
         /* if (_mm_movemask_epi8(b)) break; */
     }
 
     fclose(f);
-    // __m128i _mm_lddqu_si128 (__m128i const* mem_addr)
     return 0;
 }
