@@ -70,11 +70,11 @@ main(int argc, char** argv)
             _mm256_or_si256(mask3, mask4));
         lexbuf toks_mask = _mm256_andnot_si256(idents_mask, charmask);
 
-        lexbuf idents_startmask = _mm256_cmpeq_epi16(idents_mask, ident_start);
         lexbuf idents_mask_shed = _mm256_bslli_epi128(idents_mask, 1);
+        lexbuf idents_startmask1 = _mm256_cmpeq_epi16(idents_mask, ident_start);
         lexbuf idents_startmask2 = _mm256_cmpeq_epi16(idents_mask_shed, ident_start);
 
-        lexbuf nidents_mask1 = _mm256_and_si256(idents_mask, idents_startmask);
+        lexbuf nidents_mask1 = _mm256_and_si256(idents_mask, idents_startmask1);
         lexbuf nidents_mask2 = _mm256_and_si256(idents_mask_shed, idents_startmask2);
 
         /* lexbuf idents = _mm256_and_si256(b, idents_mask); */
@@ -139,7 +139,7 @@ main(int argc, char** argv)
                 else printf("%c", p[i]);
             }
             printf("|\n");
-#elif 0
+#elif 1
             printf("|");
             for (int i = 0; i < nlex; ++i)
                 printf("%d", i % 10);
@@ -162,7 +162,7 @@ main(int argc, char** argv)
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
-                if (idents_mmask & (1 << i)) printf("*");
+                if (common_mmask & (1 << i)) printf("*");
                 else printf(" ");
             }
             printf("|\n\n");
