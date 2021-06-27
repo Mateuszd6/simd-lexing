@@ -15,6 +15,16 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
+static inline __m256i
+mm_ext_shl8_si256(__m256i a)
+{
+    /* TODO: This is probably slow, figure out better way! */
+    u64 carry = (u64) ((u8) _mm256_extract_epi8(a, 15));
+    __m256i shifted = _mm256_bslli_epi128(a, 1);
+    __m256i andcarry = _mm256_set_epi64x(0, carry, 0, 0);
+    return _mm256_or_si256(shifted, andcarry);
+}
+
 int
 main(int argc, char** argv)
 {
@@ -51,7 +61,6 @@ main(int argc, char** argv)
     {
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);
         lexbuf charmask = _mm256_cmpgt_epi8(b, _mm256_set1_epi8(0x20));
-        /* b = _mm256_and_si256(b, charmask); */
         lexbuf mask1 = _mm256_and_si256(
             _mm256_cmpgt_epi8(b, _mm256_set1_epi8('0' - 1)),
             _mm256_cmpgt_epi8(_mm256_set1_epi8('9' + 1), b));
@@ -70,54 +79,48 @@ main(int argc, char** argv)
             _mm256_or_si256(mask3, mask4));
         lexbuf toks_mask = _mm256_andnot_si256(idents_mask, charmask);
 
-        lexbuf idents_mask_shed = _mm256_bslli_epi128(idents_mask, 1);
+        lexbuf idents_mask_shed = mm_ext_shl8_si256(idents_mask);
         lexbuf idents_startmask1 = _mm256_cmpeq_epi16(idents_mask, ident_start);
         lexbuf idents_startmask2 = _mm256_cmpeq_epi16(idents_mask_shed, ident_start);
 
         lexbuf nidents_mask1 = _mm256_and_si256(idents_mask, idents_startmask1);
         lexbuf nidents_mask2 = _mm256_and_si256(idents_mask_shed, idents_startmask2);
 
-        /* lexbuf idents = _mm256_and_si256(b, idents_mask); */
-        /* lexbuf toks = _mm256_and_si256(b, toks_mask); */
-
         // TODO: Maybe don't use toks_mask, just use idents mask and entire "> '
         // '" mask, then if something is not a part ident it's the ohter token.
         u32 toks_mmask = (u32) _mm256_movemask_epi8(toks_mask);
-
         u32 idents_m1 = (u32) _mm256_movemask_epi8(nidents_mask1);
         u32 idents_m2 = (u32) _mm256_movemask_epi8(nidents_mask2);
-        u32 idents_mmask = (idents_m1 | idents_m2 >> 1)/* & (~(1 << 16))*/;
-        if (_mm256_movemask_epi8(idents_mask) & (1 << 15))
-            idents_mmask &= (~(1 << 16));
-
+        u32 idents_mmask = idents_m1 | (idents_m2 >> 1);
+        u32 idents_fullmask_rev = ~((u32) _mm256_movemask_epi8(idents_mask));
         u32 common_mmask = toks_mmask | idents_mmask;
-        /* ASSERT((toks_mmask & idents_mmask) == 0); */
+        ASSERT((toks_mmask & idents_mmask) == 0);
 
         u32 s = common_mmask;
         while (s)
         {
-            char* x = p + __builtin_ctz(s);
+            i32 idx = __builtin_ctz(s);
+            char* x = p + idx;
             s = (s & (s - 1));
-
-            printf("TOK: \"");
 
             if (('a' <= x[0] && x[0] <= 'z')
                 || ('A' <= x[0] && x[0] <= 'Z')
                 || x[0] == '_'
                 || ('0' <= x[0] && x[0] <= '9')) // TODO: digit
             {
-                for (int i = 0;
-                     ('a' <= x[i] && x[i] <= 'z') || ('A' <= x[i] && x[i] <= 'Z') || ('0' <= x[i] && x[i] <= '9') || x[i] == '_';
-                     ++i)
-                {
-                    printf("%c", x[i]);
-                }
+                u32 mask = idents_fullmask_rev & (~((1 << (idx + 1)) - 1));
+                i32 wsidx = mask ? __builtin_ctz(mask) : 32 /* TODO */;
+                /* asm volatile (""::"g"(&wsidx):"memory");*/ /* TODO */
+
+                printf("TOK: \"");
+                printf("%.*s", wsidx - idx, x);
+                printf("\"\n");
             }
             else
             {
-                printf("%c", x[0]);
+                /* asm volatile (""::"g"(&x[0]):"memory"); */
+                printf("TOK: \"%c\"\n", x[0]);
             }
-            printf("\"\n");
 
             /* printf("TOK: \""); */
             /* for (int i = 0; i < 8; ++i) */
@@ -165,16 +168,17 @@ main(int argc, char** argv)
                 if (common_mmask & (1 << i)) printf("*");
                 else printf(" ");
             }
-            printf("|\n\n");
-            /* printf("--\n");
+            printf("|\n");
+            printf("--\n");
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
                 if (_mm256_movemask_epi8(idents_mask_shed) & (1 << i))
-                    printf("%c", p[i] == '\n' ? ' ' : p[i]);
+                    printf("%c", p[i - 1] == '\n' ? ' ' : p[i - 1]);
                 else printf(" ");
             }
             printf("|\n");
+            /*
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
@@ -182,6 +186,7 @@ main(int argc, char** argv)
                 else printf(" ");
             }
             printf("|\n"); */
+            printf("\n");
 #elif 0
             static int q = 0;
             if (!q) printf("|");
