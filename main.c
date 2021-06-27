@@ -12,6 +12,9 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
+/* TODO */
+/* #define printf(...) ((void) 0) */
+
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
@@ -58,6 +61,7 @@ main(int argc, char** argv)
 #endif
 
     for (;;)
+    continue_outer:
     {
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);
         lexbuf charmask = _mm256_cmpgt_epi8(b, _mm256_set1_epi8(0x20));
@@ -102,6 +106,8 @@ main(int argc, char** argv)
             i32 idx = __builtin_ctz(s);
             char* x = p + idx;
             s = (s & (s - 1));
+            int size_ge_2 = s && (s & (1 << (idx + 1))); /* TODO: Overflow shift */
+            int size_ge_3 = size_ge_2 && (s & (1 << (idx + 2))); /* TODO: Overflow shift */
 
             if (('a' <= x[0] && x[0] <= 'z')
                 || ('A' <= x[0] && x[0] <= 'Z')
@@ -122,10 +128,80 @@ main(int argc, char** argv)
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
             }
+            else if (x[0] == '"')
+            {
+                printf("TOK: STRING START\n");
+                ++x;
+                while (*x != '"') /* TODO: Incorrect! */
+                    ++x;
+                p = x + 1;
+                goto continue_outer;
+            }
+            else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '/')
+            {
+                printf("Skip // comment\n");
+                ++x;
+                while (*x != '\n') /* TODO: Incorrect! */
+                    ++x;
+                p = x + 1;
+                goto continue_outer;
+            }
+            else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '*')
+            {
+                printf("Skip /* comment\n");
+                ++x;
+                while (*x != '*' || *(x + 1) != '/') /* TODO: Incorrect! */
+                    ++x;
+                p = x + 2;
+                goto continue_outer;
+            }
             else
             {
+#define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
+
+                if (size_ge_2
+                    /* This may give false positives */
+                    && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':'))
+                {
+                    u16 w = *((u16*) x); /* TODO: Portable unaligned load */
+                    if (size_ge_3
+                        && (x[2] == '=')
+                        && ((w == TOK2('<', '<')) || (w == TOK2('>', '>'))))
+                    {
+                        printf("TOK3: \"%.*s\"\n", 3, x);
+                        s ^= (1 << (idx + 1)) | (1 << (idx + 2));
+                        continue;
+                    }
+                    else if ((   w == TOK2('+', '+'))
+                             || (w == TOK2('-', '-'))
+                             || (w == TOK2('-', '>'))
+                             || (w == TOK2('<', '<'))
+                             || (w == TOK2('>', '>'))
+                             || (w == TOK2('&', '&'))
+                             || (w == TOK2('|', '|'))
+                             || (w == TOK2('<', '='))
+                             || (w == TOK2('>', '='))
+                             || (w == TOK2('=', '='))
+                             || (w == TOK2('!', '='))
+                             || (w == TOK2('+', '='))
+                             || (w == TOK2('-', '='))
+                             || (w == TOK2('*', '='))
+                             || (w == TOK2('/', '='))
+                             || (w == TOK2('%', '='))
+                             || (w == TOK2('&', '='))
+                             || (w == TOK2('^', '='))
+                             || (w == TOK2('|', '='))
+                             || (w == TOK2('?', ':')))
+                    {
+                        printf("TOK2: \"%.*s\"\n", 2, x);
+                        s ^= (1 << (idx + 1));
+                        continue;
+                    }
+                }
+
+                /* u16 w = *((u16*) x); */ /* TODO: !! */
                 /* asm volatile (""::"g"(&x[0]):"memory"); */
-                printf("TOK: \"%c\"\n", x[0]);
+                printf("TOK%s: \"%c\"\n", s && (s & (1 << (idx + 1))) ? " (>1tok)" : "", x[0]); /* TODO: idx + 1 > 32 */
             }
 
             /* printf("TOK: \""); */

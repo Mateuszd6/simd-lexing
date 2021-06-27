@@ -15,6 +15,8 @@ main(int argc, char** argv)
     fseek(f, 0,
                0
                        );
+    isize test = fsize;
+    test >>= 2;
     char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
     char* p = string;
     fread(string, 1, fsize, f);
