@@ -108,11 +108,17 @@ main(int argc, char** argv)
                 || x[0] == '_'
                 || ('0' <= x[0] && x[0] <= '9')) // TODO: digit
             {
-                u32 mask = idents_fullmask_rev & (~((1 << (idx + 1)) - 1));
-                i32 wsidx = mask ? __builtin_ctz(mask) : 32 /* TODO */;
-                /* asm volatile (""::"g"(&wsidx):"memory");*/ /* TODO */
+                i32 wsidx; /* TODO: no branch? */
+                if (idx < 31)
+                {
+                    u32 mask = idents_fullmask_rev & (~(((u32) 1 << (idx + 1)) - 1));
+                    wsidx = mask ? __builtin_ctz(mask) : 32;
+                }
+                else
+                    wsidx = 32;
+                /* asm volatile (""::"g"(&wsidx):"memory"); TODO */
 
-                printf("TOK: \"");
+                printf("TOK (L = %d): \"", wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
             }
@@ -166,15 +172,6 @@ main(int argc, char** argv)
             for (int i = 0; i < nlex; ++i)
             {
                 if (common_mmask & (1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-            printf("--\n");
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (_mm256_movemask_epi8(idents_mask_shed) & (1 << i))
-                    printf("%c", p[i - 1] == '\n' ? ' ' : p[i - 1]);
                 else printf(" ");
             }
             printf("|\n");
