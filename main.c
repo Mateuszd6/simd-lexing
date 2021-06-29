@@ -12,6 +12,8 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
+/* #undef ASSERT */
+/* #define ASSERT(...) */
 /* #define printf(...) ((void) 0) */
 /* #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory"); */
 #define NOOPTIMIZE(EXPR) ((void) 0)
