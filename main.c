@@ -61,6 +61,8 @@ main(int argc, char** argv)
     char* p = string;
 #endif
 
+    i64 curr_line = 1;
+    i64 curr_inline_idx = 1;
     for (;;)
     continue_outer:
     {
@@ -91,6 +93,9 @@ main(int argc, char** argv)
         lexbuf nidents_mask1 = _mm256_and_si256(idents_mask, idents_startmask1);
         lexbuf nidents_mask2 = _mm256_and_si256(idents_mask_shed, idents_startmask2);
 
+        lexbuf newline = _mm256_cmpeq_epi8(b, _mm256_set1_epi8('\n'));
+        u32 newline_mmask = (u32) _mm256_movemask_epi8(newline);
+
         // TODO: Maybe don't use toks_mask, just use idents mask and entire "> '
         // '" mask, then if something is not a part ident it's the ohter token.
         u32 toks_mmask = (u32) _mm256_movemask_epi8(toks_mask);
@@ -98,7 +103,7 @@ main(int argc, char** argv)
         u32 idents_m2 = (u32) _mm256_movemask_epi8(nidents_mask2);
         u32 idents_mmask = idents_m1 | (idents_m2 >> 1);
         u32 idents_fullmask_rev = ~((u32) _mm256_movemask_epi8(idents_mask));
-        u32 common_mmask = toks_mmask | idents_mmask;
+        u32 common_mmask = toks_mmask | idents_mmask | newline_mmask;
         ASSERT((toks_mmask & idents_mmask) == 0);
 
         u32 s = common_mmask;
@@ -107,14 +112,24 @@ main(int argc, char** argv)
             i32 idx = __builtin_ctz(s);
             char* x = p + idx;
             s = (s & (s - 1));
-            int size_ge_2 = s && (s & (1 << (idx + 1))); /* TODO: Overflow shift */
-            int size_ge_3 = size_ge_2 && (s & (1 << (idx + 2))); /* TODO: Overflow shift */
+            int size_ge_2 = s && (s & ((u32)1 << (idx + 1))); /* TODO: Overflow shift */
+            int size_ge_3 = size_ge_2 && (s & ((u32)1 << (idx + 2))); /* TODO: Overflow shift */
 
-            if (('a' <= x[0] && x[0] <= 'z')
-                || ('A' <= x[0] && x[0] <= 'Z')
-                || x[0] == '_'
-                || ('0' <= x[0] && x[0] <= '9')) // TODO: digit
+            if (newline_mmask & ((u32)1 << idx)) // TODO: Unlikely? Perhaps not so much?
             {
+                curr_line++;
+                curr_inline_idx = -idx;
+
+                continue;
+            }
+
+            if (idents_mmask & ((u32)1 << idx)) // TODO: digit
+            {
+                ASSERT(('a' <= x[0] && x[0] <= 'z')
+                       || ('A' <= x[0] && x[0] <= 'Z')
+                       || x[0] == '_'
+                       || ('0' <= x[0] && x[0] <= '9'));
+
                 i32 wsidx; /* TODO: no branch? */
                 if (idx < 31)
                 {
@@ -123,19 +138,21 @@ main(int argc, char** argv)
                 }
                 else
                     wsidx = 32;
-                /* TODO */
-                NOOPTIMIZE(wsidx);
+                NOOPTIMIZE(wsidx); /* TODO */
 
-                printf("TOK (L = %d): \"", wsidx - idx);
+                printf("%s:%ld:%ld: TOK (L = %d): \"",
+                       "./test.c", curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
             }
             else if (x[0] == '"')
             {
-                printf("TOK: STRING START\n");
-                ++x;
+                printf("%s:%ld:%ld: TOK: STRING START\n",
+                       "./test.c", curr_line, curr_inline_idx + idx);
+                char* save = x++;
                 while (*x != '"') /* TODO: Incorrect! */
                     ++x;
+                curr_inline_idx += idx + (x - save) + 1;
                 p = x + 1;
                 goto continue_outer;
             }
@@ -170,8 +187,9 @@ main(int argc, char** argv)
                         && (x[2] == '=')
                         && ((w == TOK2('<', '<')) || (w == TOK2('>', '>'))))
                     {
-                        printf("TOK3: \"%.*s\"\n", 3, x);
-                        s ^= (1 << (idx + 1)) | (1 << (idx + 2));
+                        printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
+                               "./test.c", curr_line, curr_inline_idx + idx, 3, x);
+                        s ^= ((u32)1 << (idx + 1)) | ((u32)1 << (idx + 2));
                         continue;
                     }
                     else if ((   w == TOK2('+', '+'))
@@ -195,15 +213,15 @@ main(int argc, char** argv)
                              || (w == TOK2('|', '='))
                              || (w == TOK2('?', ':')))
                     {
-                        printf("TOK2: \"%.*s\"\n", 2, x);
-                        s ^= (1 << (idx + 1));
+                        printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
+                               "./test.c", curr_line, curr_inline_idx + idx, 2, x);
+                        s ^= ((u32)1 << (idx + 1));
                         continue;
                     }
                 }
 
-                /* u16 w = *((u16*) x); */ /* TODO: !! */
                 NOOPTIMIZE(x[0]);
-                printf("TOK%s: \"%c\"\n", s && (s & (1 << (idx + 1))) ? " (>1tok)" : "", x[0]); /* TODO: idx + 1 > 32 */
+                printf("%s:%ld:%ld: TOK: \"%c\"\n", "./test.c", curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
             }
 
             /* printf("TOK: \""); */
@@ -300,6 +318,7 @@ main(int argc, char** argv)
         if (p - string >= fsize) break;
         /* printf("\n"); */
         /* if (_mm_movemask_epi8(b)) break; */
+        curr_inline_idx += 32; /* TODO: lexbuf size */
     }
 
 #if 0
