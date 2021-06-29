@@ -12,8 +12,9 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
-/* TODO */
 /* #define printf(...) ((void) 0) */
+/* #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory"); */
+#define NOOPTIMIZE(EXPR) ((void) 0)
 
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
@@ -122,7 +123,8 @@ main(int argc, char** argv)
                 }
                 else
                     wsidx = 32;
-                /* asm volatile (""::"g"(&wsidx):"memory"); TODO */
+                /* TODO */
+                NOOPTIMIZE(wsidx);
 
                 printf("TOK (L = %d): \"", wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
@@ -159,8 +161,8 @@ main(int argc, char** argv)
             {
 #define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
 
+                /* This may give false positives */
                 if (size_ge_2
-                    /* This may give false positives */
                     && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':'))
                 {
                     u16 w = *((u16*) x); /* TODO: Portable unaligned load */
@@ -200,7 +202,7 @@ main(int argc, char** argv)
                 }
 
                 /* u16 w = *((u16*) x); */ /* TODO: !! */
-                /* asm volatile (""::"g"(&x[0]):"memory"); */
+                NOOPTIMIZE(x[0]);
                 printf("TOK%s: \"%c\"\n", s && (s & (1 << (idx + 1))) ? " (>1tok)" : "", x[0]); /* TODO: idx + 1 > 32 */
             }
 
