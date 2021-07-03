@@ -153,26 +153,42 @@ main(int argc, char** argv)
                        "./test.c", curr_line, curr_inline_idx + idx);
                 char* save = x++;
                 while (*x != '"') /* TODO: Incorrect! */
-                    ++x;
+                    x++;
                 curr_inline_idx += idx + (x - save) + 1;
                 p = x + 1;
                 goto continue_outer;
             }
             else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '/')
             {
+                // No need to calculate curr_inline_idx, it ends with a \n
+
+                // TODO: why it even works?
                 printf("Skip // comment\n");
-                ++x;
+                x++;
                 while (*x != '\n') /* TODO: Incorrect! */
-                    ++x;
+                    x++;
+
                 p = x + 1;
+                curr_line++;
+                curr_inline_idx = 0;
                 goto continue_outer;
             }
             else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '*')
             {
                 printf("Skip /* comment\n");
-                ++x;
+                x++;
+                curr_inline_idx += idx + 1;
                 while (*x != '*' || *(x + 1) != '/') /* TODO: Incorrect! */
-                    ++x;
+                {
+                    if (*x == '\n')
+                    {
+                        curr_line++;
+                        curr_inline_idx = 0;
+                    }
+                    x++;
+                    curr_inline_idx++;
+                }
+                curr_inline_idx += 2;
                 p = x + 2;
                 goto continue_outer;
             }
@@ -215,6 +231,8 @@ main(int argc, char** argv)
                              || (w == TOK2('|', '='))
                              || (w == TOK2('?', ':')))
                     {
+                        // TODO: This should match */, because if we find this token
+                        // here it means we should end parsing with a lexing error
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
                                "./test.c", curr_line, curr_inline_idx + idx, 2, x);
                         s ^= ((u32)1 << (idx + 1));
@@ -228,7 +246,7 @@ main(int argc, char** argv)
 
             /* printf("TOK: \""); */
             /* for (int i = 0; i < 8; ++i) */
-                /* printf("%c", x[i] == '\n' ? ' ' : x[i]); */
+            /* printf("%c", x[i] == '\n' ? ' ' : x[i]); */
             /* printf("\"\n"); */
         }
 
@@ -260,12 +278,12 @@ main(int argc, char** argv)
             }
             printf("|\n");
             /* printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (_mm256_movemask_epi8(ident_start1) & (1 << i)) printf("F");
-                else printf(" ");
-            }
-            printf("|\n"); */
+               for (int i = 0; i < nlex; ++i)
+               {
+               if (_mm256_movemask_epi8(ident_start1) & (1 << i)) printf("F");
+               else printf(" ");
+               }
+               printf("|\n"); */
             printf("|");
             for (int i = 0; i < nlex; ++i)
             {
@@ -274,13 +292,13 @@ main(int argc, char** argv)
             }
             printf("|\n");
             /*
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (_mm256_movemask_epi8(idents_startmask2) & (1 << i)) printf("F");
-                else printf(" ");
-            }
-            printf("|\n"); */
+              printf("|");
+              for (int i = 0; i < nlex; ++i)
+              {
+              if (_mm256_movemask_epi8(idents_startmask2) & (1 << i)) printf("F");
+              else printf(" ");
+              }
+              printf("|\n"); */
             printf("\n");
 #elif 0
             static int q = 0;
