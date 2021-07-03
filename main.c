@@ -12,11 +12,13 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
-/* #undef ASSERT */
-/* #define ASSERT(...) */
-/* #define printf(...) ((void) 0) */
-/* #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory"); */
+// #undef ASSERT
+// #define ASSERT(...)
+// #define printf(...) ((void) 0)
+// #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory");
+// #define PRINT_LINES 0
 #define NOOPTIMIZE(EXPR) ((void) 0)
+#define PRINT_LINES 1
 
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
@@ -264,7 +266,7 @@ main(int argc, char** argv)
                 else printf("%c", p[i]);
             }
             printf("|\n");
-#elif 1
+#elif PRINT_LINES
             printf("|");
             for (int i = 0; i < nlex; ++i)
                 printf("%d", i % 10);
