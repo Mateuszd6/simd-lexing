@@ -20,6 +20,8 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #define NOOPTIMIZE(EXPR) ((void) 0)
 #define PRINT_LINES 1
 
+#define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
+
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
@@ -83,14 +85,13 @@ main(int argc, char** argv)
             _mm256_cmpgt_epi8(_mm256_set1_epi8('Z' + 1), b));
         lexbuf mask4 = _mm256_cmpeq_epi8(b, _mm256_set1_epi8('_'));
 
-        lexbuf ident_start = _mm256_set1_epi16(0xFF00);
-
         lexbuf idents_mask = _mm256_or_si256(
             _mm256_or_si256(mask1, mask2),
             _mm256_or_si256(mask3, mask4));
+        lexbuf idents_mask_shed = mm_ext_shl8_si256(idents_mask); // TODO: Try not to shift it
         lexbuf toks_mask = _mm256_andnot_si256(idents_mask, charmask);
 
-        lexbuf idents_mask_shed = mm_ext_shl8_si256(idents_mask);
+        lexbuf ident_start = _mm256_set1_epi16(0xFF00);
         lexbuf idents_startmask1 = _mm256_cmpeq_epi16(idents_mask, ident_start);
         lexbuf idents_startmask2 = _mm256_cmpeq_epi16(idents_mask_shed, ident_start);
 
@@ -98,13 +99,11 @@ main(int argc, char** argv)
         lexbuf nidents_mask2 = _mm256_and_si256(idents_mask_shed, idents_startmask2);
 
         lexbuf newline = _mm256_cmpeq_epi8(b, _mm256_set1_epi8('\n'));
-        u32 newline_mmask = (u32) _mm256_movemask_epi8(newline);
 
-        // TODO: Maybe don't use toks_mask, just use idents mask and entire "> '
-        // '" mask, then if something is not a part ident it's the ohter token.
         u32 toks_mmask = (u32) _mm256_movemask_epi8(toks_mask);
         u32 idents_m1 = (u32) _mm256_movemask_epi8(nidents_mask1);
         u32 idents_m2 = (u32) _mm256_movemask_epi8(nidents_mask2);
+        u32 newline_mmask = (u32) _mm256_movemask_epi8(newline);
         u32 idents_mmask = idents_m1 | (idents_m2 >> 1);
         u32 idents_fullmask_rev = ~((u32) _mm256_movemask_epi8(idents_mask));
         u32 common_mmask = toks_mmask | idents_mmask | newline_mmask;
@@ -196,8 +195,6 @@ main(int argc, char** argv)
             }
             else
             {
-#define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
-
                 /* This may give false positives */
                 if (size_ge_2
                     && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':'))
@@ -245,11 +242,6 @@ main(int argc, char** argv)
                 NOOPTIMIZE(x[0]);
                 printf("%s:%ld:%ld: TOK: \"%c\"\n", "./test.c", curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
             }
-
-            /* printf("TOK: \""); */
-            /* for (int i = 0; i < 8; ++i) */
-            /* printf("%c", x[i] == '\n' ? ' ' : x[i]); */
-            /* printf("\"\n"); */
         }
 
         {
@@ -336,11 +328,9 @@ main(int argc, char** argv)
         }
 
         p += nlex;
+        curr_inline_idx += 32; /* TODO: lexbuf size */
 
         if (p - string >= fsize) break;
-        /* printf("\n"); */
-        /* if (_mm_movemask_epi8(b)) break; */
-        curr_inline_idx += 32; /* TODO: lexbuf size */
     }
 
 #if 0
