@@ -164,6 +164,9 @@ main(int argc, char** argv)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
+        // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
+        // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
+        // get advantage of this!
         if (carry == CARRY_IDENT && (idents_mmask & 1))
         {
             // Ignore the token, b/c this is just the continuation
@@ -190,19 +193,16 @@ main(int argc, char** argv)
 
         // Could be also set after the loop, it makes no difference and we will
         // probably get better caching here?
+
+        // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
+        // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
+        // get advantage of this!
         if (fixup_mmask & ((u64)1 << 63))
-        {
             carry = CARRY_IDENT;
-        }
         else if ((common_mmask & ((u64)1 << 63)) && !(newline_mmask & ((u64)1 << 63)))
-        {
-            printf("CARRY OP\n");
             carry = CARRY_OP;
-        }
         else
-        {
             carry = CARRY_NONE;
-        }
 
         while (s)
         {
