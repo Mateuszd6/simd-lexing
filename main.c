@@ -21,6 +21,7 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #define PRINT_LINES 1
 
 #define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
+#define FNAME "./test.c" // TODO: temp
 
 typedef __m256i lexbuf;
 static const int nlex = sizeof(lexbuf);
@@ -189,6 +190,12 @@ main(int argc, char** argv)
                 p++;
                 goto skip_single_line_comment;
             }
+
+            if (p[-1] == '/' && p[0] == '*')
+            {
+                p++;
+                goto skip_multi_line_comment;
+            }
         }
 
         // Could be also set after the loop, it makes no difference and we will
@@ -236,7 +243,7 @@ main(int argc, char** argv)
                 NOOPTIMIZE(wsidx); /* TODO */
 
                 printf("%s:%ld:%ld: TOK (L = %d): \"",
-                       "./test.c", curr_line, curr_inline_idx + idx, wsidx - idx);
+                       FNAME, curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
             }
@@ -244,7 +251,7 @@ main(int argc, char** argv)
             {
                 // TODO: probably move down?
                 printf("%s:%ld:%ld: TOK: STRING START\n",
-                       "./test.c", curr_line, curr_inline_idx + idx);
+                       FNAME, curr_line, curr_inline_idx + idx);
                 // TODO: This doesn't work with newlines
                 char* save = x++;
                 while (*x != '"') /* TODO: Incorrect! */
@@ -253,6 +260,34 @@ main(int argc, char** argv)
                 p = x + 1;
                 carry = CARRY_NONE;
                 goto continue_outer;
+            }
+            else if (x[0] == '\'')
+            {
+                u64 skip_mask;
+                if (LIKELY(x[1] != '\\'))
+                    skip_mask = 0b110; // TODO: Make sure that x[2] is '
+                else if (x[3] == '\'')
+                    skip_mask = 0b1110;
+                else
+                {
+                    printf("BAD: \"%.*s\"\n", 8, x);
+                    NOTREACHED;
+                }
+
+                printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
+                       FNAME, curr_line, curr_inline_idx + idx,
+                       x[1] != '\\' ? 1 : 2, x + 1);
+
+                i32 last_idx = 2 + (skip_mask == 0b1110);
+                if (UNLIKELY(idx + last_idx >= 64))
+                {
+                    p += idx + last_idx + 1;
+                    curr_inline_idx += idx + last_idx + 1;
+                    goto continue_outer;
+                }
+
+                s &= (~(skip_mask << idx));
+                continue;
             }
             else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '/')
             {
@@ -284,7 +319,7 @@ main(int argc, char** argv)
                         && ((w == TOK2('<', '<')) || (w == TOK2('>', '>'))))
                     {
                         printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
-                               "./test.c", curr_line, curr_inline_idx + idx, 3, x);
+                               FNAME, curr_line, curr_inline_idx + idx, 3, x);
                         s ^= ((u64)1 << (idx + 1)) | ((u64)1 << (idx + 2));
                         continue;
                     }
@@ -312,14 +347,14 @@ main(int argc, char** argv)
                         // TODO: This should match */, because if we find this token
                         // here it means we should end parsing with a lexing error
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
-                               "./test.c", curr_line, curr_inline_idx + idx, 2, x);
+                               FNAME, curr_line, curr_inline_idx + idx, 2, x);
                         s ^= ((u64)1 << (idx + 1));
                         continue;
                     }
                 }
 
                 NOOPTIMIZE(x[0]);
-                printf("%s:%ld:%ld: TOK: \"%c\"\n", "./test.c", curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
+                printf("%s:%ld:%ld: TOK: \"%c\"\n", FNAME, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
             }
         }
 
@@ -427,6 +462,12 @@ skip_multi_line_comment:
             continue;
         }
     }
+
+    fprintf(stdout, "Parsed: "
+            "%ld lines, ? ids, ? strings, "
+            "? chars, ? ints, ? hex,   ? floats,    "
+            "? //s, ? /**/s,   0 #foo\n",
+            curr_line);
 
 #if 0
     fclose(f);

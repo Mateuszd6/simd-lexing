@@ -1,4 +1,6 @@
-                                                               // test
+                                                               /* test
+Hello darkness my old friend
+ */
 
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
@@ -30,7 +32,7 @@ main(int argc, char** argv)
         /* b = _mm256_and_si256(b, charmask); */
         lexbuf mask1 = _mm256_and_si256(
             _mm256_cmpgt_epi8(b, _mm256_set1_epi8('0' - 1)),
-            _mm256_cmpgt_epi8(_mm256_set1_epi8('9' + 1), b));
+            _mm256_cmpgt_epi8(_mm256_set1_epi8('\9' + 1), b));
         lexbuf mask2 = _mm256_and_si256(
             _mm256_cmpgt_epi8(b, _mm256_set1_epi8('a' - 1)),
             _mm256_cmpgt_epi8(_mm256_set1_epi8('z' + 1), b));
@@ -82,3 +84,4 @@ main(int argc, char** argv)
     fclose(f);
     return 0;
 }
+                                                                                       ;
