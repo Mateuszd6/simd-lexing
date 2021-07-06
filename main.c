@@ -25,6 +25,13 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 typedef __m256i lexbuf;
 static const int nlex = sizeof(lexbuf);
 
+enum carry
+{
+    CARRY_NONE = 0,
+    CARRY_IDENT = 1,
+    CARRY_OP = 2,
+};
+
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
@@ -68,6 +75,7 @@ main(int argc, char** argv)
 
     i64 curr_line = 1;
     i64 curr_inline_idx = 1;
+    i32 carry = CARRY_NONE;
 
     // TODO: Probably move into the loop
     lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
@@ -138,6 +146,7 @@ main(int argc, char** argv)
         // part can't start with ident. Since we disable the first bit of the
         // second part, we and with bit-flipped 1 or 0.
         u32 fixup_mmask_1 = _mm256_movemask_epi8(idents_mask_1);
+        u32 fixup_mmask_2 = _mm256_movemask_epi8(idents_mask_2);
         idents_mmask_2 &= ~((u32) ((fixup_mmask_1 & (((u32) 1) << 31)) != 0));
 
         u32 idents_fullmask_rev_1 = ~((u32) _mm256_movemask_epi8(idents_mask_1));
@@ -151,9 +160,50 @@ main(int argc, char** argv)
         u64 newline_mmask = ((u64) newline_mmask_1) | ((u64) newline_mmask_2) << 32;
         u64 idents_mmask = ((u64) idents_mmask_1) | ((u64) idents_mmask_2) << 32;
         u64 idents_fullmask_rev = ((u64) idents_fullmask_rev_1) | ((u64) idents_fullmask_rev_2) << 32;
+        u64 fixup_mmask = ((u64) fixup_mmask_1) | ((u64) fixup_mmask_2) << 32;
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
-
         u64 s = common_mmask;
+
+        if (carry == CARRY_IDENT && (idents_mmask & 1))
+        {
+            // Ignore the token, b/c this is just the continuation
+            s = (s & (s - 1));
+
+            u64 mask = idents_fullmask_rev & (~1);
+            i32 wsidx = mask ? __builtin_ctzll(mask) : 64;
+            NOOPTIMIZE(wsidx); /* TODO */
+
+            printf("Token ignored L += %d\n", wsidx);
+        }
+        else if (carry == CARRY_OP && (toks_mmask_1 & 1))
+        {
+            // TODO: Implement all the cases!
+            // TODO: this only works because / is never at the end of any token!
+            printf("Perhaps missing a token\n");
+
+            if (p[-1] == '/' && p[0] == '/')
+            {
+                p++;
+                goto skip_single_line_comment;
+            }
+        }
+
+        // Could be also set after the loop, it makes no difference and we will
+        // probably get better caching here?
+        if (fixup_mmask & ((u64)1 << 63))
+        {
+            carry = CARRY_IDENT;
+        }
+        else if ((common_mmask & ((u64)1 << 63)) && !(newline_mmask & ((u64)1 << 63)))
+        {
+            printf("CARRY OP\n");
+            carry = CARRY_OP;
+        }
+        else
+        {
+            carry = CARRY_NONE;
+        }
+
         while (s)
         {
             i32 idx = __builtin_ctzll(s);
@@ -177,15 +227,11 @@ main(int argc, char** argv)
                        || x[0] == '_'
                        || ('0' <= x[0] && x[0] <= '9'));
 
-                i32 wsidx; /* TODO: no branch? */
-                if (idx < 63)
+                i32 wsidx = 64; /* TODO: no branch? */
+                if (LIKELY(idx < 63))
                 {
                     u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1));
                     wsidx = mask ? __builtin_ctzll(mask) : 64;
-                }
-                else
-                {
-                    wsidx = 64;
                 }
                 NOOPTIMIZE(wsidx); /* TODO */
 
@@ -196,13 +242,16 @@ main(int argc, char** argv)
             }
             else if (x[0] == '"')
             {
+                // TODO: probably move down?
                 printf("%s:%ld:%ld: TOK: STRING START\n",
                        "./test.c", curr_line, curr_inline_idx + idx);
+                // TODO: This doesn't work with newlines
                 char* save = x++;
                 while (*x != '"') /* TODO: Incorrect! */
                     x++;
                 curr_inline_idx += idx + (x - save) + 1;
                 p = x + 1;
+                carry = CARRY_NONE;
                 goto continue_outer;
             }
             else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '/')
@@ -211,39 +260,23 @@ main(int argc, char** argv)
 
                 // TODO: why it even works?
                 printf("Skip // comment\n");
-                x++;
-                while (*x != '\n') /* TODO: Incorrect! */
-                    x++;
-
                 p = x + 1;
-                curr_line++;
-                curr_inline_idx = 0;
-                goto continue_outer;
+                goto skip_single_line_comment;
             }
             else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '*')
             {
                 printf("Skip /* comment\n");
-                x++;
+                p = x + 1; // TODO: Why +1, not +2 ??
                 curr_inline_idx += idx + 1;
-                while (*x != '*' || *(x + 1) != '/') /* TODO: Incorrect! */
-                {
-                    if (*x == '\n')
-                    {
-                        curr_line++;
-                        curr_inline_idx = 0;
-                    }
-                    x++;
-                    curr_inline_idx++;
-                }
-                curr_inline_idx += 2;
-                p = x + 2;
-                goto continue_outer;
+                goto skip_multi_line_comment;
             }
             else
             {
                 /* This may give false positives */
                 if (size_ge_2
-                    && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':')) // TODO: 0b is gnu extension
+                    // TODO: 0b is gnu extension
+                    // TODO: Is this even correct? what about -> ?
+                    && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':'))
                 {
                     u16 w = *((u16*) x); /* TODO: Portable unaligned load */
                     if (size_ge_3
@@ -362,6 +395,37 @@ main(int argc, char** argv)
         curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
 
         if (p - string >= fsize) break;
+        continue;
+
+skip_single_line_comment:
+        {
+            while (*p != '\n') /* TODO: Incorrect! */
+                p++;
+
+            p++;
+            curr_line++;
+            curr_inline_idx = 1;
+            carry = CARRY_NONE;
+            continue;
+        }
+
+skip_multi_line_comment:
+        {
+            while (*p != '*' || *(p + 1) != '/') /* TODO: Incorrect! */
+            {
+                if (*p == '\n')
+                {
+                    curr_line++;
+                    curr_inline_idx = 0;
+                }
+                p++;
+                curr_inline_idx++;
+            }
+            curr_inline_idx += 2;
+            p += 2;
+            carry = CARRY_NONE;
+            continue;
+        }
     }
 
 #if 0

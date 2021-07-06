@@ -1,13 +1,15 @@
+                                                               // test
+
 typedef __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
 int
 main(int argc, char** argv)
 {
-    if (argc < 2) fatal("Need a file");
+    if (argc < 2) fatal(            0);
     char* fname = argv[1];
 
-    FILE* f = fopen(fname, "rb");
+    FILE* f = fopen(fname,    0);
     fseek(f, 0,
                2
                        );
@@ -18,7 +20,7 @@ main(int argc, char** argv)
     isize test = fsize;
     test >>= 2;
     char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
-    char* p = string;
+    char* p = string; // Mateusz mateusz mateusz
     fread(string, 1, fsize, f);
 
     for (;;)
