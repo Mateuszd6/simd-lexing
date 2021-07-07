@@ -12,11 +12,11 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
-// #undef ASSERT
-// #define ASSERT(...)
-// #define printf(...) ((void) 0)
-// #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory");
-// #define PRINT_LINES 0
+/* #undef ASSERT */
+/* #define ASSERT(...) */
+/* #define printf(...) ((void) 0) */
+/* #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory"); */
+/* #define PRINT_LINES 0 */
 #define NOOPTIMIZE(EXPR) ((void) 0)
 #define PRINT_LINES 1
 
@@ -77,6 +77,12 @@ main(int argc, char** argv)
     i64 curr_line = 1;
     i64 curr_inline_idx = 1;
     i32 carry = CARRY_NONE;
+    i64 n_parsed_idents = 0;
+    i64 n_parsed_numbers = 0;
+    i64 n_parsed_strings = 0;
+    i64 n_parsed_chars = 0;
+    i64 n_single_comments = 0;
+    i64 n_long_comments = 0;
 
     // TODO: Probably move into the loop
     lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
@@ -246,6 +252,8 @@ main(int argc, char** argv)
                        FNAME, curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
+                if ('0' <= x[0] && x[0] <= '9') n_parsed_numbers++;
+                else n_parsed_idents++;
             }
             else if (x[0] == '"')
             {
@@ -259,37 +267,33 @@ main(int argc, char** argv)
                 curr_inline_idx += idx + (x - save) + 1;
                 p = x + 1;
                 carry = CARRY_NONE;
+                n_parsed_strings++;
                 goto continue_outer;
             }
             else if (x[0] == '\'')
             {
-                u64 skip_mask;
-                if (LIKELY(x[1] != '\\'))
-                    skip_mask = 0b110; // TODO: Make sure that x[2] is '
-                else if (x[3] == '\'')
-                    skip_mask = 0b1110;
-                else
+                u64 skip_idx = 2 + (x[1] == '\\');
+                u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                if (UNLIKELY(skip_idx == 2 && x[2] != '\''))
                 {
                     printf("BAD: \"%.*s\"\n", 8, x);
                     NOTREACHED;
                 }
 
-                printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
-                       FNAME, curr_line, curr_inline_idx + idx,
-                       x[1] != '\\' ? 1 : 2, x + 1);
-
-                i32 last_idx = 2 + (skip_mask == 0b1110);
-                if (UNLIKELY(idx + last_idx >= 64))
+                // TODO: NOTREACHED if bad sequence
+                NOOPTIMIZE(skip_mask);
+                n_parsed_chars++;
+                if (idx + skip_idx >= 64)
                 {
-                    p += idx + last_idx + 1;
-                    curr_inline_idx += idx + last_idx + 1;
+                    p += idx + skip_idx + 1;
+                    curr_inline_idx += idx + skip_idx + 1;
                     goto continue_outer;
                 }
 
                 s &= (~(skip_mask << idx));
                 continue;
             }
-            else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '/')
+            else if (size_ge_2 && x[0] == '/' && x[1] == '/')
             {
                 // No need to calculate curr_inline_idx, it ends with a \n
 
@@ -298,7 +302,7 @@ main(int argc, char** argv)
                 p = x + 1;
                 goto skip_single_line_comment;
             }
-            else if (size_ge_2 && x[0] == '/' && size_ge_2 && x[1] == '*')
+            else if (size_ge_2 && x[0] == '/' && x[1] == '*')
             {
                 printf("Skip /* comment\n");
                 p = x + 1; // TODO: Why +1, not +2 ??
@@ -441,6 +445,7 @@ skip_single_line_comment:
             curr_line++;
             curr_inline_idx = 1;
             carry = CARRY_NONE;
+            n_single_comments++;
             continue;
         }
 
@@ -459,15 +464,18 @@ skip_multi_line_comment:
             curr_inline_idx += 2;
             p += 2;
             carry = CARRY_NONE;
+            n_long_comments++;
             continue;
         }
     }
 
     fprintf(stdout, "Parsed: "
-            "%ld lines, ? ids, ? strings, "
-            "? chars, ? ints, ? hex,   ? floats,    "
-            "? //s, ? /**/s,   0 #foo\n",
-            curr_line);
+            "%ld lines, %ld ids, %ld strings, "
+            "%ld chars, %ld ints, %ld hex,   %ld floats,    "
+            "%ld //s, %ld /**/s,   0 #foo\n",
+            curr_line, n_parsed_idents, n_parsed_strings,
+            n_parsed_chars, n_parsed_numbers, 0L, 0L,
+            n_single_comments, n_long_comments);
 
 #if 0
     fclose(f);
