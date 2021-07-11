@@ -1,20 +1,20 @@
                                                                /* test
 Hello darkness my old friend
- */
+ */ typedef
 
-typedef __m256i lexbuf;
+__m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
 int
 main(int argc, char** argv)
 {
-    if (argc < 2) fatal(            0);
+    if (argc < 2) fatal( <=      >=  0);
     char* fname = argv[1];
 
-    FILE* f = fopen(fname,    0);
+    FILE* f = fopen(fname,   ...);
     fseek(f, 0,
                2
-                       );
+                       )...
     isize fsize = ftell(f);
     fseek(f, 0,
                0

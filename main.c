@@ -2,6 +2,7 @@ extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include <stdio.h>
+#include <string.h>
 
 #include <pmmintrin.h>
 #include <immintrin.h>
@@ -20,7 +21,8 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #define NOOPTIMIZE(EXPR) ((void) 0)
 #define PRINT_LINES 1
 
-#define TOK2(X, Y) (((u16) X) | ((u16) Y) << 8)
+#define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
+#define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
 #define FNAME "./test.c" // TODO: temp
 
 typedef __m256i lexbuf;
@@ -41,6 +43,15 @@ mm_ext_shl8_si256(__m256i a)
     __m256i shifted = _mm256_bslli_epi128(a, 1);
     __m256i andcarry = _mm256_set_epi64x(0, carry, 0, 0);
     return _mm256_or_si256(shifted, andcarry);
+}
+
+static inline u32
+u32_loadu(void* p)
+{
+    u32 retval;
+    memcpy(&retval, p, sizeof retval);
+
+    return retval;
 }
 
 int
@@ -185,6 +196,7 @@ main(int argc, char** argv)
 
             printf("Token ignored L += %d\n", wsidx);
         }
+#if 0
         else if (carry == CARRY_OP && (toks_mmask_1 & 1))
         {
             // TODO: Implement all the cases!
@@ -203,6 +215,7 @@ main(int argc, char** argv)
                 goto skip_multi_line_comment;
             }
         }
+#endif
 
         // Could be also set after the loop, it makes no difference and we will
         // probably get better caching here?
@@ -210,20 +223,18 @@ main(int argc, char** argv)
         // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
         // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
         // get advantage of this!
-        if (fixup_mmask & ((u64)1 << 63))
-            carry = CARRY_IDENT;
-        else if ((common_mmask & ((u64)1 << 63)) && !(newline_mmask & ((u64)1 << 63)))
-            carry = CARRY_OP;
-        else
-            carry = CARRY_NONE;
+        if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
+#if 0
+        else if ((common_mmask & ((u64)1 << 63)) && !(newline_mmask & ((u64)1 << 63))) carry = CARRY_OP;
+#endif
+        else carry = CARRY_NONE;
 
         while (s)
         {
             i32 idx = __builtin_ctzll(s);
             char* x = p + idx;
             s = (s & (s - 1));
-            u64 size_ge_2 = s && (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift */
-            u64 size_ge_3 = size_ge_2 && (s & ((u64)1 << (idx + 2))); /* TODO: Overflow shift */
+            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift */
 
             if (newline_mmask & ((u64)1 << idx)) // TODO: Unlikely? Perhaps not so much?
             {
@@ -293,6 +304,7 @@ main(int argc, char** argv)
                 s &= (~(skip_mask << idx));
                 continue;
             }
+#if 0
             else if (size_ge_2 && x[0] == '/' && x[1] == '/')
             {
                 // No need to calculate curr_inline_idx, it ends with a \n
@@ -309,50 +321,97 @@ main(int argc, char** argv)
                 curr_inline_idx += idx + 1;
                 goto skip_multi_line_comment;
             }
+#endif
             else
             {
                 /* This may give false positives */
-                if (size_ge_2
-                    // TODO: 0b is gnu extension
-                    // TODO: Is this even correct? what about -> ?
-                    && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':'))
+                // TODO: 0b is gnu extension
+                // TODO: Is this even correct? what about -> ?
+                // TODO: Narrow that criteria
+                if (size_ge_2 /* && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':') */)
                 {
-                    u16 w = *((u16*) x); /* TODO: Portable unaligned load */
-                    if (size_ge_3
-                        && (x[2] == '=')
-                        && ((w == TOK2('<', '<')) || (w == TOK2('>', '>'))))
+                    u32 w = u32_loadu(x);
+                    u32 w2 = w & 0xFFFF;
+                    u32 w3 = w & 0xFFFFFF;
+                    // u16 w = *((u16*) x); /* TODO: Portable unaligned load */
+#if 0
+                    if (x[2] == '=' && (w2 == TOK2('<', '<') || w2 == TOK2('>', '>')))
                     {
                         printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
                                FNAME, curr_line, curr_inline_idx + idx, 3, x);
                         s ^= ((u64)1 << (idx + 1)) | ((u64)1 << (idx + 2));
                         continue;
                     }
-                    else if ((   w == TOK2('+', '+'))
-                             || (w == TOK2('-', '-'))
-                             || (w == TOK2('-', '>'))
-                             || (w == TOK2('<', '<'))
-                             || (w == TOK2('>', '>'))
-                             || (w == TOK2('&', '&'))
-                             || (w == TOK2('|', '|'))
-                             || (w == TOK2('<', '='))
-                             || (w == TOK2('>', '='))
-                             || (w == TOK2('=', '='))
-                             || (w == TOK2('!', '='))
-                             || (w == TOK2('+', '='))
-                             || (w == TOK2('-', '='))
-                             || (w == TOK2('*', '='))
-                             || (w == TOK2('/', '='))
-                             || (w == TOK2('%', '='))
-                             || (w == TOK2('&', '='))
-                             || (w == TOK2('^', '='))
-                             || (w == TOK2('|', '='))
-                             || (w == TOK2('?', ':')))
+                    else
+#endif
+                    if (w2 == TOK2('/', '/'))
+                    {
+                        printf("Skip // comment\n");
+                        p = x + 1;
+                        goto skip_single_line_comment;
+                    }
+                    else if (w2 == TOK2('/', '*'))
+                    {
+                        printf("Skip /* comment\n");
+                        p = x + 1; // TODO: Why +1, not +2 ??
+                        curr_inline_idx += idx + 1;
+                        goto skip_multi_line_comment;
+                    }
+                    else if (    w3 == TOK3('>', '>', '=')
+                             || (w3 == TOK3('<', '<', '='))
+                             || (w3 == TOK3('.', '.', '.')))
+                    {
+                        printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
+                               FNAME, curr_line, curr_inline_idx + idx, 3, x);
+
+                        u64 skip_idx = 2;
+                        u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                        if (idx + skip_idx >= 64)
+                        {
+                            p += idx + skip_idx + 1;
+                            curr_inline_idx += idx + skip_idx + 1;
+                            goto continue_outer;
+                        }
+
+                        s &= (~(skip_mask << idx));
+                        continue;
+                    }
+                    else if ((   w2 == TOK2('+', '+'))
+                             || (w2 == TOK2('-', '-'))
+                             || (w2 == TOK2('-', '>'))
+                             || (w2 == TOK2('<', '<'))
+                             || (w2 == TOK2('>', '>'))
+                             || (w2 == TOK2('&', '&'))
+                             || (w2 == TOK2('|', '|'))
+                             || (w2 == TOK2('<', '='))
+                             || (w2 == TOK2('>', '='))
+                             || (w2 == TOK2('=', '='))
+                             || (w2 == TOK2('!', '='))
+                             || (w2 == TOK2('+', '='))
+                             || (w2 == TOK2('-', '='))
+                             || (w2 == TOK2('*', '='))
+                             || (w2 == TOK2('/', '='))
+                             || (w2 == TOK2('%', '='))
+                             || (w2 == TOK2('&', '='))
+                             || (w2 == TOK2('^', '='))
+                             || (w2 == TOK2('|', '='))
+                             || (w2 == TOK2('?', ':')))
                     {
                         // TODO: This should match */, because if we find this token
                         // here it means we should end parsing with a lexing error
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
                                FNAME, curr_line, curr_inline_idx + idx, 2, x);
-                        s ^= ((u64)1 << (idx + 1));
+
+                        u64 skip_idx = 1;
+                        u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                        if (idx + skip_idx >= 64)
+                        {
+                            p += idx + skip_idx + 1;
+                            curr_inline_idx += idx + skip_idx + 1;
+                            goto continue_outer;
+                        }
+
+                        s &= (~(skip_mask << idx));
                         continue;
                     }
                 }
@@ -362,21 +421,8 @@ main(int argc, char** argv)
             }
         }
 
+#if PRINT_LINES
         {
-#if 0
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-                printf("%d", i % 10);
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (p[i] == '\n') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-            printf("|\n");
-#elif PRINT_LINES
             printf("|");
             for (int i = 0; i < 2 * nlex; ++i)
                 printf("%d", i % 10);
@@ -397,38 +443,8 @@ main(int argc, char** argv)
             }
             printf("|\n");
             printf("\n");
-#elif 0
-            static int q = 0;
-            if (!q) printf("|");
-            for (int i = 0; i < nlex; ++i)
-            {
-                if (p[i] == '\n') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-
-            if (q) printf("|\n");
-            q = 1 - q;
-#elif 0
-            printf("|");
-            for (int i = 0; i < 16; ++i)
-            {
-                if (p[i] == '\n') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-            printf("|\n");
-            printf("|");
-            for (int i = 16; i < 32; ++i)
-            {
-                if (p[i] == '\n') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-            printf("|\n");
-#else
-#endif
         }
+#endif
 
         p += 2 * nlex;
         curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
@@ -461,6 +477,7 @@ skip_multi_line_comment:
                 p++;
                 curr_inline_idx++;
             }
+
             curr_inline_idx += 2;
             p += 2;
             carry = CARRY_NONE;
