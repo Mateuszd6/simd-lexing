@@ -32,7 +32,6 @@ enum carry
 {
     CARRY_NONE = 0,
     CARRY_IDENT = 1,
-    CARRY_OP = 2,
 };
 
 static inline __m256i
@@ -196,26 +195,6 @@ main(int argc, char** argv)
 
             printf("Token ignored L += %d\n", wsidx);
         }
-#if 0
-        else if (carry == CARRY_OP && (toks_mmask_1 & 1))
-        {
-            // TODO: Implement all the cases!
-            // TODO: this only works because / is never at the end of any token!
-            printf("Perhaps missing a token\n");
-
-            if (p[-1] == '/' && p[0] == '/')
-            {
-                p++;
-                goto skip_single_line_comment;
-            }
-
-            if (p[-1] == '/' && p[0] == '*')
-            {
-                p++;
-                goto skip_multi_line_comment;
-            }
-        }
-#endif
 
         // Could be also set after the loop, it makes no difference and we will
         // probably get better caching here?
@@ -224,9 +203,6 @@ main(int argc, char** argv)
         // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
         // get advantage of this!
         if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
-#if 0
-        else if ((common_mmask & ((u64)1 << 63)) && !(newline_mmask & ((u64)1 << 63))) carry = CARRY_OP;
-#endif
         else carry = CARRY_NONE;
 
         while (s)
@@ -344,6 +320,7 @@ main(int argc, char** argv)
                         u64 m = s & newline_mmask;
                         if (m) // Short skip, newline in the same buf
                         {
+                            printf("  short comment\n");
                             i32 comment_end_idx = __builtin_ctzll(m);
                             s &= ~(((u64)1 << comment_end_idx) - 1);
 
@@ -351,9 +328,19 @@ main(int argc, char** argv)
                         }
                         else
                         {
+                            printf("  long comment\n");
                             p = x + 1;
-                            while (*p != '\n') /* TODO: Incorrect! */
-                                p++;
+                            for (;; p += sizeof(lexbuf))
+                            {
+                                lexbuf cb = _mm256_loadu_si256((void*) p);
+                                lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
+                                u32 cb_mm = _mm256_movemask_epi8(cb_n);
+                                if (cb_mm)
+                                {
+                                    p += __builtin_ctzll(cb_mm);
+                                    break;
+                                }
+                            }
 
                             p++;
                             curr_line++;
