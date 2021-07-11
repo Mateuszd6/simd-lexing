@@ -23,7 +23,7 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
-#define FNAME "./test2.c" // TODO: temp
+#define FNAME "./test.c" // TODO: temp
 
 typedef __m256i lexbuf;
 static const int nlex = sizeof(lexbuf);
@@ -341,8 +341,27 @@ main(int argc, char** argv)
                     if (w2 == TOK2('/', '/'))
                     {
                         printf("Skip // comment\n");
-                        p = x + 1;
-                        goto skip_single_line_comment;
+                        u64 m = s & newline_mmask;
+                        if (m) // Short skip, newline in the same buf
+                        {
+                            i32 comment_end_idx = __builtin_ctzll(m);
+                            s &= ~(((u64)1 << comment_end_idx) - 1);
+
+                            continue;
+                        }
+                        else
+                        {
+                            p = x + 1;
+                            while (*p != '\n') /* TODO: Incorrect! */
+                                p++;
+
+                            p++;
+                            curr_line++;
+                            curr_inline_idx = 1;
+                            carry = CARRY_NONE;
+                            n_single_comments++;
+                            goto continue_outer;
+                        }
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
@@ -358,6 +377,7 @@ main(int argc, char** argv)
                         printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
                                FNAME, curr_line, curr_inline_idx + idx, 3, x);
 
+                        // TODO: move outer for common code?
                         u64 skip_idx = 2;
                         u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
@@ -396,6 +416,7 @@ main(int argc, char** argv)
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
                                FNAME, curr_line, curr_inline_idx + idx, 2, x);
 
+                        // TODO: move outer for common code?
                         u64 skip_idx = 1;
                         u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
@@ -445,19 +466,6 @@ main(int argc, char** argv)
 
         if (p - string >= fsize) break;
         continue;
-
-skip_single_line_comment:
-        {
-            while (*p != '\n') /* TODO: Incorrect! */
-                p++;
-
-            p++;
-            curr_line++;
-            curr_inline_idx = 1;
-            carry = CARRY_NONE;
-            n_single_comments++;
-            continue;
-        }
 
 skip_multi_line_comment:
         {

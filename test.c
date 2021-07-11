@@ -21,12 +21,13 @@ main(int argc, char** argv)
                        );
     isize test = fsize;
     test >>= 2;
-    char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+    char* string = // Will calloc
+        calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
     char* p = string; // Mateusz mateusz mateusz
     fread(string, 1, fsize, f);
 
     for (;;)
-    {
+    {   // This is a very long comment that will take us to the next chunk
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);
         lexbuf charmask = _mm256_cmpgt_epi8(b, _mm256_set1_epi8(0x20));
         /* b = _mm256_and_si256(b, charmask); */
