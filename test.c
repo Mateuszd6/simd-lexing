@@ -1,6 +1,6 @@
                                                                /* test
 Hello darkness my old friend
- */ typedef
+ */typedef foo bar baz 12 1111
 
 __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
@@ -22,7 +22,7 @@ main(int argc, char** argv)
     isize test = fsize;
     test >>= 2;
     char* string = // Will calloc
-        calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+        calloc(fsize + nlex/* _ROUND UP TO SSE BUF SIZE, TODO */,sizeof(char));
     char* p = string; // Mateusz mateusz mateusz
     fread(string, 1, fsize, f);
 
@@ -30,7 +30,7 @@ main(int argc, char** argv)
     {   // This is a very long comment that will take us to the next chunk
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);
         lexbuf charmask = _mm256_cmpgt_epi8(b, _mm256_set1_epi8(0x20));
-        /* b = _mm256_and_si256(b, charmask); */
+        /* b = _mm256_and_si256(b, charmask); */q q
         lexbuf mask1 = _mm256_and_si256(
             _mm256_cmpgt_epi8(b, _mm256_set1_epi8('0' - 1)),
             _mm256_cmpgt_epi8(_mm256_set1_epi8('\9' + 1), b));
@@ -78,8 +78,8 @@ main(int argc, char** argv)
         p += nlex;
 
         if (p - string >= fsize) break;
-        /* printf("\n"); */
-        /* if (_mm_movemask_epi8(b)) break; */
+        /* printf("\n"); */q
+qwe     /* if (_mm_movemask_epi8(b)) break; */
     }
 
     fclose(f);

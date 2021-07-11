@@ -205,6 +205,31 @@ main(int argc, char** argv)
         if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
         else carry = CARRY_NONE;
 
+#if PRINT_LINES
+        {
+            printf("|");
+            for (int i = 0; i < 2 * nlex; ++i)
+                printf("%d", i % 10);
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < 2 * nlex; ++i)
+            {
+                if (p[i] == '\n') printf(" ");
+                else if (!p[i]) printf(" ");
+                else printf("%c", p[i]);
+            }
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < 2 * nlex; ++i)
+            {
+                if (common_mmask & ((u64)1 << i)) printf("*");
+                else printf(" ");
+            }
+            printf("|\n");
+            printf("\n");
+        }
+#endif
+
         while (s)
         {
             i32 idx = __builtin_ctzll(s);
@@ -353,9 +378,76 @@ main(int argc, char** argv)
                     else if (w2 == TOK2('/', '*'))
                     {
                         printf("Skip /* comment\n");
-                        p = x + 1; // TODO: Why +1, not +2 ??
-                        curr_inline_idx += idx + 1;
-                        goto skip_multi_line_comment;
+
+                        if (0) /* TODO: NEXT is it worth for short comment skipping? */
+                        {
+                            printf("  short comment\n");
+                            continue;
+                        }
+                        else
+                        {
+                            p = x + 1; // TODO: Why +1, not +2 ??
+                            curr_inline_idx += idx + 1;
+                            printf("%s:%ld:%ld: long comment\n", FNAME, curr_line, curr_inline_idx - 1);
+                            for (;;)
+                            {
+                                lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
+                                lexbuf cb_1 = _mm256_loadu_si256((void*) p);
+#if 1
+                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1);
+#else
+                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
+#endif
+                                lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
+                                lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
+                                lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
+                                u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
+                                u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
+                                u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
+
+                                // TODO: NEXT: Test both cases
+                                u32 cb_mm = ((cb_mm_1 & 0b10101010101010101010101010101010)
+                                             | ((cb_mm_2 & 0b10101010101010101010101010101010) >> 1));
+                                if (cb_mm)
+                                {
+                                    // TODO: Add newlines here
+                                    i32 adv = __builtin_ctz(cb_mm) + 1;
+                                    cb_nl_mm &= ((u32)1 << adv) - 1; // TODO: Overflow?
+                                    if (cb_nl_mm)
+                                    {
+                                        i32 nladv = 32 - __builtin_clz(cb_nl_mm);
+                                        ASSERT(nladv < adv);
+                                        curr_line += __builtin_popcount(cb_nl_mm);
+                                        curr_inline_idx = 1 + (adv - nladv);
+                                    }
+                                    else
+                                    {
+                                        curr_inline_idx += adv;
+                                    }
+
+                                    p += adv;
+                                    break;
+                                }
+
+                                if (cb_nl_mm)
+                                {
+                                    curr_line += __builtin_popcount(cb_nl_mm);
+                                    curr_inline_idx = __builtin_clz(cb_nl_mm);
+                                }
+                                else
+                                {
+                                    curr_inline_idx += 32;
+                                }
+
+                                p += sizeof(lexbuf);
+                            }
+
+                            // curr_inline_idx += 2;
+                            // p += 2;
+                            carry = CARRY_NONE;
+                            n_long_comments++;
+                            goto continue_outer;
+                        }
                     }
                     else if (    w3 == TOK3('>', '>', '=')
                              || (w3 == TOK3('<', '<', '='))
@@ -423,56 +515,11 @@ main(int argc, char** argv)
             }
         }
 
-#if PRINT_LINES
-        {
-            printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
-                printf("%d", i % 10);
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
-            {
-                if (p[i] == '\n') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
-            {
-                if (common_mmask & ((u64)1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-            printf("\n");
-        }
-#endif
-
         p += 2 * nlex;
         curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
 
         if (p - string >= fsize) break;
         continue;
-
-skip_multi_line_comment:
-        {
-            while (*p != '*' || *(p + 1) != '/') /* TODO: Incorrect! */
-            {
-                if (*p == '\n')
-                {
-                    curr_line++;
-                    curr_inline_idx = 0;
-                }
-                p++;
-                curr_inline_idx++;
-            }
-
-            curr_inline_idx += 2;
-            p += 2;
-            carry = CARRY_NONE;
-            n_long_comments++;
-            continue;
-        }
     }
 
     fprintf(stdout, "Parsed: "
