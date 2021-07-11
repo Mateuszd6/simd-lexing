@@ -23,7 +23,7 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
-#define FNAME "./test.c" // TODO: temp
+#define FNAME "./test2.c" // TODO: temp
 
 typedef __m256i lexbuf;
 static const int nlex = sizeof(lexbuf);
@@ -60,7 +60,7 @@ main(int argc, char** argv)
     if (argc < 2) fatal("Need a file");
     char* fname = argv[1];
 
-#if 0
+#if 1
     FILE* f = fopen(fname, "rb");
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
@@ -291,6 +291,10 @@ main(int argc, char** argv)
                     NOTREACHED;
                 }
 
+                printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
+                       FNAME, curr_line, curr_inline_idx + idx,
+                       x[1] != '\\' ? 1 : 2, x + 1);
+
                 // TODO: NOTREACHED if bad sequence
                 NOOPTIMIZE(skip_mask);
                 n_parsed_chars++;
@@ -333,17 +337,7 @@ main(int argc, char** argv)
                     u32 w = u32_loadu(x);
                     u32 w2 = w & 0xFFFF;
                     u32 w3 = w & 0xFFFFFF;
-                    // u16 w = *((u16*) x); /* TODO: Portable unaligned load */
-#if 0
-                    if (x[2] == '=' && (w2 == TOK2('<', '<') || w2 == TOK2('>', '>')))
-                    {
-                        printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
-                               FNAME, curr_line, curr_inline_idx + idx, 3, x);
-                        s ^= ((u64)1 << (idx + 1)) | ((u64)1 << (idx + 2));
-                        continue;
-                    }
-                    else
-#endif
+
                     if (w2 == TOK2('/', '/'))
                     {
                         printf("Skip // comment\n");
