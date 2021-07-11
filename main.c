@@ -392,7 +392,7 @@ main(int argc, char** argv)
             printf("|");
             for (int i = 0; i < 2 * nlex; ++i)
             {
-                if (common_mmask & (1 << i)) printf("*");
+                if (common_mmask & ((u64)1 << i)) printf("*");
                 else printf(" ");
             }
             printf("|\n");

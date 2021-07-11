@@ -8,3 +8,6 @@ all:
 	    # -march=native                                                          \
 	    # -fstrict-aliasing                                                      \
 	    # main.c -o main
+
+clean:
+	rm -rf main
