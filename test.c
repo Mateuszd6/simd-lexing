@@ -26,6 +26,15 @@ main(int argc, char** argv)
     char* p = string; // Mateusz mateusz mateusz
     fread(string, 1, fsize, f);
 
+    char* string2 = "short";
+
+    __assert_fail(
+        "(ARRAY_MIN_CAPACITY) % 2 == 0 && \"Default capacity must be "
+        "divisible by 2!\"",
+        "array.h", 156, __extension__ __PRETTY_FUNCTION__);
+
+    "\\\\".
+
     for (;;)
     {   // This is a very long comment that will take us to the next chunk
         lexbuf b = _mm256_loadu_si256((lexbuf*) p);

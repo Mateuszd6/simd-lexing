@@ -13,17 +13,19 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 #include "util.h"
 
-/* #undef ASSERT */
-/* #define ASSERT(...) */
-/* #define printf(...) ((void) 0) */
-/* #define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory"); */
-/* #define PRINT_LINES 0 */
-#define NOOPTIMIZE(EXPR) ((void) 0)
-#define PRINT_LINES 1
+#ifdef RELEASE
+#  undef ASSERT
+#  define ASSERT(...)
+#  define printf(...) ((void) 0)
+#  define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory");
+#  define PRINT_LINES 0
+#else
+#  define NOOPTIMIZE(EXPR) ((void) 0)
+#  define PRINT_LINES 1
+#endif
 
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
-#define FNAME "./test.c" // TODO: temp
 
 typedef __m256i lexbuf;
 static const int nlex = sizeof(lexbuf);
@@ -94,7 +96,6 @@ main(int argc, char** argv)
     i64 n_single_comments = 0;
     i64 n_long_comments = 0;
 
-    // TODO: Probably move into the loop
     lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
     lexbuf cmpmask_9 = _mm256_set1_epi8('9' + 1);
     lexbuf cmpmask_a = _mm256_set1_epi8('a' - 1);
@@ -103,10 +104,11 @@ main(int argc, char** argv)
     lexbuf cmpmask_Z = _mm256_set1_epi8('Z' + 1);
     lexbuf cmpmask_underscore = _mm256_set1_epi8('_');
     lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
-    lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20);
+    lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
+    lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
 
     for (;;)
-    continue_outer:
+continue_outer:
     {
         lexbuf b_1 = _mm256_loadu_si256((void*) p);
         lexbuf b_2 = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)));
@@ -181,9 +183,6 @@ main(int argc, char** argv)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
-        // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
-        // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
-        // get advantage of this!
         if (carry == CARRY_IDENT && (idents_mmask & 1))
         {
             // Ignore the token, b/c this is just the continuation
@@ -261,26 +260,59 @@ main(int argc, char** argv)
                 NOOPTIMIZE(wsidx); /* TODO */
 
                 printf("%s:%ld:%ld: TOK (L = %d): \"",
-                       FNAME, curr_line, curr_inline_idx + idx, wsidx - idx);
+                       fname, curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
                 if ('0' <= x[0] && x[0] <= '9') n_parsed_numbers++;
                 else n_parsed_idents++;
             }
-            else if (x[0] == '"')
+            else if (x[0] == '"') // TODO: probably move down? Does it matter?
             {
-                // TODO: probably move down?
-                printf("%s:%ld:%ld: TOK: STRING START\n",
-                       FNAME, curr_line, curr_inline_idx + idx);
-                // TODO: This doesn't work with newlines
-                char* save = x++;
-                while (*x != '"') /* TODO: Incorrect! */
-                    x++;
-                curr_inline_idx += idx + (x - save) + 1;
-                p = x + 1;
-                carry = CARRY_NONE;
-                n_parsed_strings++;
-                goto continue_outer;
+                printf("%s:%ld:%ld: TOK: STRING START\n", fname, curr_line, curr_inline_idx + idx);
+                curr_inline_idx += idx + 1; // TODO: try to avoid here?
+                char* strstart = x++;
+
+                // TODO: Don't increment index in the loop, calculate adv from the start?
+
+                for (;; x += sizeof(lexbuf))
+                {
+                    lexbuf nb = _mm256_loadu_si256((void *)x);
+                    lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
+                    u32 nb_mm = _mm256_movemask_epi8(nb_n);
+
+                    // TODO: Newline in quote?
+                    // TODO: Also, validate utf here? Maybe not?
+repeat_doublequote_seek:
+                    if (nb_mm)
+                    {
+                        i32 end_idx = __builtin_ctzll(nb_mm);
+                        if (UNLIKELY(x[end_idx - 1]) == '\\')
+                        {
+                            // TODO: Could be extracted to a function
+                            char* b = &x[end_idx - 2];
+                            int bslashes = 1;
+                            while (*b-- == '\\')
+                                bslashes++;
+
+                            if (bslashes & 1)
+                            {
+                                printf("There are %d backslashes, so doublequote is cancelled-out\n", bslashes);
+                                nb_mm = (nb_mm & (nb_mm - 1));
+                                goto repeat_doublequote_seek;
+                            }
+                            else
+                            {
+                                printf("There are %d backslashes, this is a valid doublequote\n", bslashes);
+                            }
+                        }
+
+                        p = x + end_idx + 1;
+                        curr_inline_idx += (x - strstart) - 1 + end_idx + 1;
+                        carry = CARRY_NONE;
+                        n_parsed_strings++;
+                        goto continue_outer;
+                    }
+                }
             }
             else if (x[0] == '\'')
             {
@@ -293,7 +325,7 @@ main(int argc, char** argv)
                 }
 
                 printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
-                       FNAME, curr_line, curr_inline_idx + idx,
+                       fname, curr_line, curr_inline_idx + idx,
                        x[1] != '\\' ? 1 : 2, x + 1);
 
                 // TODO: NOTREACHED if bad sequence
@@ -388,7 +420,7 @@ main(int argc, char** argv)
                         {
                             p = x + 1; // TODO: Why +1, not +2 ??
                             curr_inline_idx += idx + 1;
-                            printf("%s:%ld:%ld: long comment\n", FNAME, curr_line, curr_inline_idx - 1);
+                            printf("%s:%ld:%ld: long comment\n", fname, curr_line, curr_inline_idx - 1);
                             for (;;)
                             {
                                 lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
@@ -454,7 +486,7 @@ main(int argc, char** argv)
                              || (w3 == TOK3('.', '.', '.')))
                     {
                         printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
-                               FNAME, curr_line, curr_inline_idx + idx, 3, x);
+                               fname, curr_line, curr_inline_idx + idx, 3, x);
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 2;
@@ -493,7 +525,7 @@ main(int argc, char** argv)
                         // TODO: This should match */, because if we find this token
                         // here it means we should end parsing with a lexing error
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
-                               FNAME, curr_line, curr_inline_idx + idx, 2, x);
+                               fname, curr_line, curr_inline_idx + idx, 2, x);
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 1;
@@ -511,7 +543,7 @@ main(int argc, char** argv)
                 }
 
                 NOOPTIMIZE(x[0]);
-                printf("%s:%ld:%ld: TOK: \"%c\"\n", FNAME, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
+                printf("%s:%ld:%ld: TOK: \"%c\"\n", fname, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
             }
         }
 
