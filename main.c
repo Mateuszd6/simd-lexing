@@ -234,7 +234,7 @@ continue_outer:
             i32 idx = __builtin_ctzll(s);
             char* x = p + idx;
             s = (s & (s - 1));
-            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift */
+            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift? */
 
             if (newline_mmask & ((u64)1 << idx)) // TODO: Unlikely? Perhaps not so much?
             {
@@ -254,7 +254,7 @@ continue_outer:
                 i32 wsidx = 64; /* TODO: no branch? */
                 if (LIKELY(idx < 63))
                 {
-                    u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1));
+                    u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1)); // TODO: Overflow shift?
                     wsidx = mask ? __builtin_ctzll(mask) : 64;
                 }
                 NOOPTIMIZE(wsidx); /* TODO */
@@ -278,15 +278,66 @@ continue_outer:
                 {
                     lexbuf nb = _mm256_loadu_si256((void *)x);
                     lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
+                    lexbuf nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
+                    u32 nl_mm = _mm256_movemask_epi8(nl_n);
 
-                    // TODO: Newline in quote?
                     // TODO: Also, validate utf here? Maybe not?
+
+                    // If there is a newline in the buffer, check if it in in
+                    // the doublequote and make sure it is backslashed
+                    if (UNLIKELY(nl_mm))
+                    {
+                        i32 end_idx = nb_mm ? __builtin_ctz(nb_mm) : 32;
+                        while (nl_mm)
+                        {
+                            i32 nl_idx = __builtin_ctz(nl_mm);
+                            if (nl_idx > end_idx)
+                                break;
+
+                            nl_mm = (nl_mm & (nl_mm - 1));
+                            if (x[nl_idx - 1] == '\\')
+                            {
+                                // TODO: Copypaste Could be extracted to a function
+                                char* b = &x[nl_idx - 2];
+                                int bslashes = 1;
+                                while (*b-- == '\\')
+                                    bslashes++;
+
+                                if (bslashes & 1)
+                                {
+                                    printf("There are %d backslashes, so doublequote is cancelled-out\n", bslashes);
+                                    strstart = x + nl_idx;
+                                    curr_line++;
+                                    curr_inline_idx = 1;
+                                    continue;
+                                }
+                                else
+                                {
+                                    printf("There are %d backslashes, this is a valid doublequote\n", bslashes);
+                                }
+                            }
+
+                            printf("Unescaped newline in the middle of the string\n");
+                            exit(1);
+                        }
+                    }
+
 repeat_doublequote_seek:
                     if (nb_mm)
                     {
-                        i32 end_idx = __builtin_ctzll(nb_mm);
-                        if (UNLIKELY(x[end_idx - 1]) == '\\')
+                        i32 end_idx = __builtin_ctz(nb_mm);
+
+#if 0
+                        if (UNLIKELY(nl_end_idx < end_idx))
+                        {
+                            printf("Newline is before doublequote, lex error?\n");
+                            exit(1);
+                            // goto lex error
+                        }
+#endif
+
+                        if (UNLIKELY(x[end_idx - 1] == '\\'))
                         {
                             // TODO: Could be extracted to a function
                             char* b = &x[end_idx - 2];
@@ -418,13 +469,30 @@ repeat_doublequote_seek:
                         }
                         else
                         {
-                            p = x + 1; // TODO: Why +1, not +2 ??
-                            curr_inline_idx += idx + 1;
-                            printf("%s:%ld:%ld: long comment\n", fname, curr_line, curr_inline_idx - 1);
+                            p = x + 2;
+                            curr_inline_idx += idx + 2;
+                            printf("%s:%ld:%ld: long comment\n", fname, curr_line, curr_inline_idx - 2);
                             for (;;)
                             {
                                 lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
                                 lexbuf cb_1 = _mm256_loadu_si256((void*) p);
+#if PRINT_LINES
+                                {
+                                    printf("|");
+                                    for (int i = 0; i < nlex; ++i)
+                                        printf("%d", i % 10);
+                                    printf("|\n");
+                                    printf("|");
+                                    for (int i = 0; i < nlex; ++i)
+                                    {
+                                        if (p[i] == '\n') printf(" ");
+                                        else if (!p[i]) printf(" ");
+                                        else printf("%c", p[i]);
+                                    }
+                                    printf("|\n");
+                                    printf("\n");
+                                }
+#endif
 #if 1
                                 lexbuf cb_2 = mm_ext_shl8_si256(cb_1);
 #else
@@ -443,8 +511,10 @@ repeat_doublequote_seek:
                                 if (cb_mm)
                                 {
                                     // TODO: Add newlines here
-                                    i32 adv = __builtin_ctz(cb_mm) + 1;
-                                    cb_nl_mm &= ((u32)1 << adv) - 1; // TODO: Overflow?
+                                    i32 tz = __builtin_ctz(cb_mm);
+                                    i32 adv = tz + 1;
+                                    u32 adv_pow = (u32)1 << tz;
+                                    cb_nl_mm &= adv_pow | (adv_pow - 1);
                                     if (cb_nl_mm)
                                     {
                                         i32 nladv = 32 - __builtin_clz(cb_nl_mm);
@@ -464,7 +534,7 @@ repeat_doublequote_seek:
                                 if (cb_nl_mm)
                                 {
                                     curr_line += __builtin_popcount(cb_nl_mm);
-                                    curr_inline_idx = __builtin_clz(cb_nl_mm);
+                                    curr_inline_idx = __builtin_clz(cb_nl_mm) + 1;
                                 }
                                 else
                                 {
