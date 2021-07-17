@@ -430,33 +430,40 @@ repeat_doublequote_seek:
                         {
                             printf("  short comment\n");
                             i32 comment_end_idx = __builtin_ctzll(m);
-                            s &= ~(((u64)1 << comment_end_idx) - 1);
-
-                            continue;
-                        }
-                        else
-                        {
-                            printf("  long comment\n");
-                            p = x + 1;
-                            for (;; p += sizeof(lexbuf))
+                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) // TODO: Use vectors instead of looking up x
                             {
-                                lexbuf cb = _mm256_loadu_si256((void*) p);
-                                lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
-                                u32 cb_mm = _mm256_movemask_epi8(cb_n);
-                                if (cb_mm)
-                                {
-                                    p += __builtin_ctzll(cb_mm);
-                                    break;
-                                }
+                                // TODO: This is the place, where warning about
+                                // multi-lne-single-line comment can be emmited.
+                                printf("We actually have a backslashed string, "
+                                       "so don't bother with a fast skip\n");
+                                goto skip_long;
                             }
 
-                            p++;
-                            curr_line++;
-                            curr_inline_idx = 1;
-                            carry = CARRY_NONE;
-                            n_single_comments++;
-                            goto continue_outer;
+                            s &= ~(((u64)1 << comment_end_idx) - 1); // TODO: Overflow?
+                            continue;
                         }
+
+skip_long:
+                        printf("  long comment\n");
+                        p = x + 1;
+                        for (;; p += sizeof(lexbuf))
+                        {
+                            lexbuf cb = _mm256_loadu_si256((void*) p);
+                            lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
+                            u32 cb_mm = _mm256_movemask_epi8(cb_n);
+                            if (cb_mm)
+                            {
+                                p += __builtin_ctzll(cb_mm);
+                                break;
+                            }
+                        }
+
+                        p++;
+                        curr_line++;
+                        curr_inline_idx = 1;
+                        carry = CARRY_NONE;
+                        n_single_comments++;
+                        goto continue_outer;
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
