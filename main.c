@@ -95,6 +95,8 @@ main(int argc, char** argv)
     i64 n_parsed_chars = 0;
     i64 n_single_comments = 0;
     i64 n_long_comments = 0;
+    i64 n_single_comments_skipped = 0;
+    i64 n_long_comments_skipped = 0;
 
     lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
     lexbuf cmpmask_9 = _mm256_set1_epi8('9' + 1);
@@ -146,6 +148,26 @@ continue_outer:
         lexbuf nidents_mask2_1 = _mm256_and_si256(idents_mask_shed_1, idents_startmask2_1);
         lexbuf nidents_mask1_2 = _mm256_and_si256(idents_mask_2, idents_startmask1_2);
         lexbuf nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
+
+#if 1 // TODO : if it is slower, don't do it?
+        // TODO: Maybe do these only once?
+        lexbuf b1_shed = mm_ext_shl8_si256(b_1);
+        lexbuf b2_shed = mm_ext_shl8_si256(b_2);
+        lexbuf long_comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
+
+        lexbuf long_comment_end_mask1_1 = _mm256_cmpeq_epi16(b_1, long_comment_end);
+        lexbuf long_comment_end_mask2_1 = _mm256_cmpeq_epi16(b1_shed, long_comment_end);
+        lexbuf long_comment_end_mask1_2 = _mm256_cmpeq_epi16(b_2, long_comment_end);
+        lexbuf long_comment_end_mask2_2 = _mm256_cmpeq_epi16(b2_shed, long_comment_end);
+
+        u32 longcomm_m1_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_1);
+        u32 longcomm_m1_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_2);
+        u32 longcomm_m2_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_1);
+        u32 longcomm_m2_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_2);
+        u32 longcomm_mmask_1 = longcomm_m1_1 | (longcomm_m2_1 >> 1);
+        u32 longcomm_mmask_2 = longcomm_m1_2 | (longcomm_m2_2 >> 1);
+        u64 longcomm_mmask = ((u64) longcomm_mmask_1) | ((u64) longcomm_mmask_2) << 32;
+#endif
 
         lexbuf newline_1 = _mm256_cmpeq_epi8(b_1, cmpmask_newline);
         lexbuf newline_2 = _mm256_cmpeq_epi8(b_2, cmpmask_newline);
@@ -392,24 +414,6 @@ repeat_doublequote_seek:
                 s &= (~(skip_mask << idx));
                 continue;
             }
-#if 0
-            else if (size_ge_2 && x[0] == '/' && x[1] == '/')
-            {
-                // No need to calculate curr_inline_idx, it ends with a \n
-
-                // TODO: why it even works?
-                printf("Skip // comment\n");
-                p = x + 1;
-                goto skip_single_line_comment;
-            }
-            else if (size_ge_2 && x[0] == '/' && x[1] == '*')
-            {
-                printf("Skip /* comment\n");
-                p = x + 1; // TODO: Why +1, not +2 ??
-                curr_inline_idx += idx + 1;
-                goto skip_multi_line_comment;
-            }
-#endif
             else
             {
                 /* This may give false positives */
@@ -430,7 +434,7 @@ repeat_doublequote_seek:
                         {
                             printf("  short comment\n");
                             i32 comment_end_idx = __builtin_ctzll(m);
-                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) // TODO: Use vectors instead of looking up x
+                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) // TODO: Use vectors instead of looking up?
                             {
                                 // TODO: This is the place, where warning about
                                 // multi-lne-single-line comment can be emmited.
@@ -439,7 +443,9 @@ repeat_doublequote_seek:
                                 goto skip_long;
                             }
 
-                            s &= ~(((u64)1 << comment_end_idx) - 1); // TODO: Overflow?
+                            s &= ~(((u64)1 << comment_end_idx) - 1);
+                            n_single_comments++;
+                            n_single_comments_skipped++;
                             continue;
                         }
 
@@ -469,9 +475,16 @@ skip_long:
                     {
                         printf("Skip /* comment\n");
 
-                        if (0) /* TODO: NEXT is it worth for short comment skipping? */
+                        u64 c = s & longcomm_mmask;
+                        if (c && c < (s & newline_mmask))
                         {
-                            printf("  short comment\n");
+                            printf("Posibility for the fast skip\n");
+                            n_long_comments_skipped++;
+
+                            i32 tz = __builtin_ctzll(c);
+                            u64 adv_pow = (u64)1 << (tz + 1); // TODO: OVERFLOW HERE
+                            s &= ~(adv_pow | (adv_pow - 1));
+
                             continue;
                         }
                         else

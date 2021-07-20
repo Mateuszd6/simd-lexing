@@ -6,7 +6,7 @@ __m256i lexbuf;
 const int nlex = sizeof(lexbuf);
 
 int
-main(int argc, char** argv)
+main /*entrypoint*/ (int argc, char** argv)
 {
     if (argc < 2) fatal( <=      >=  0);
     char* fname = argv[1];
