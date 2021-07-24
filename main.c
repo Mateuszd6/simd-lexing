@@ -473,12 +473,12 @@ skip_long:
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
-                        printf("Skip /* comment\n");
+                        printf("%s:%ld:%ld: /* comment", fname, curr_line, curr_inline_idx + idx);
 
                         u64 c = s & longcomm_mmask;
-                        if (c && c < (s & newline_mmask))
+                        if (c && __builtin_ctzll(c) < __builtin_ctzll(s & newline_mmask))
                         {
-                            printf("Posibility for the fast skip\n");
+                            printf("  (short)\n");
                             n_long_comments_skipped++;
 
                             i32 tz = __builtin_ctzll(c);
@@ -491,11 +491,28 @@ skip_long:
                         {
                             p = x + 2;
                             curr_inline_idx += idx + 2;
-                            printf("%s:%ld:%ld: long comment\n", fname, curr_line, curr_inline_idx - 2);
+                            printf("  (long)\n");
                             for (;;)
                             {
                                 lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
                                 lexbuf cb_1 = _mm256_loadu_si256((void*) p);
+#if 0
+                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1);
+#else
+                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1)); // TODO: This is incurrect
+#endif
+
+                                lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
+                                lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
+                                lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
+                                u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
+                                u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
+                                u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
+
+                                // TODO: NEXT: Test both cases
+                                u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010;
+                                u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
+
 #if PRINT_LINES
                                 {
                                     printf("|");
@@ -513,26 +530,14 @@ skip_long:
                                     printf("\n");
                                 }
 #endif
-#if 1
-                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1);
-#else
-                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
-#endif
-                                lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
-                                lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
-                                lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
-                                u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
-                                u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
-                                u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
 
-                                // TODO: NEXT: Test both cases
-                                u32 cb_mm = ((cb_mm_1 & 0b10101010101010101010101010101010)
-                                             | ((cb_mm_2 & 0b10101010101010101010101010101010) >> 1));
+                                u32 cb_mm = m1 | (m2 << 1);
                                 if (cb_mm)
                                 {
-                                    // TODO: Add newlines here
                                     i32 tz = __builtin_ctz(cb_mm);
-                                    i32 adv = tz + 1;
+                                    printf("tz = %d %d\n", tz, ((((u32)1 << tz) & (m2 << 1)) != 0));
+
+                                    i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
                                     u32 adv_pow = (u32)1 << tz;
                                     cb_nl_mm &= adv_pow | (adv_pow - 1);
                                     if (cb_nl_mm)
