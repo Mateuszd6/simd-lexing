@@ -38,6 +38,14 @@ enum carry
     CARRY_IDENT = 1,
 };
 
+enum lex_in
+{
+    IN_NONE = 0,
+    IN_SHORT_COMMENT = 1,
+    IN_LONG_COMMENT = 2,
+    IN_STRING = 3,
+};
+
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
@@ -70,18 +78,19 @@ static i64 n_long_comments_skipped = 0;
 static char* g_fname = 0;
 #endif
 
-typedef struct parse_state parse_state;
-struct parse_state
+typedef struct lex_state lex_state;
+struct lex_state
 {
     char* string;
     char* string_end;
     i64 curr_line;
     i64 curr_inline_idx;
     i32 carry;
+    i32 in;
 };
 
 static char*
-lex(parse_state* state)
+lex(lex_state* state)
 {
     char* p = state->string;
     char* string_end = state->string_end;
@@ -99,6 +108,16 @@ lex(parse_state* state)
     lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
     lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
     lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
+
+    if (UNLIKELY(state->in != IN_NONE))
+    {
+        switch (state->in) {
+        case IN_STRING: goto in_string;
+        case IN_SHORT_COMMENT: goto in_short_comment;
+            // case IN_LONG_COMMENT: goto
+        default: NOTREACHED;
+        }
+    }
 
     while (p < string_end)
     {
@@ -289,6 +308,7 @@ lex(parse_state* state)
                 // TODO: Don't increment index in the loop, calculate adv from the start?
 
                 for (;; x += sizeof(lexbuf))
+in_string:
                 {
                     lexbuf nb = _mm256_loadu_si256((void *)x);
                     lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
@@ -445,12 +465,33 @@ skip_long:
                         printf("  long comment\n");
                         p = x + 1;
                         for (;; p += sizeof(lexbuf))
+in_short_comment:
                         {
-                            if (UNLIKELY(p + 32 >= string_end))
+                            if (UNLIKELY(p >= string_end))
                             {
-                                // state = STATE_IN_COMMENT: // TODO
+                                printf("Cannot parse further, breaking and saving state!\n");
+                                state->in = IN_SHORT_COMMENT;
                                 goto finalize;
                             }
+
+#if PRINT_LINES
+                            {
+                                printf("|");
+                                for (int i = 0; i < nlex; ++i)
+                                    printf("%d", i % 10);
+                                printf("|\n");
+                                printf("|");
+                                for (int i = 0; i < nlex; ++i)
+                                {
+                                    if (p[i] == '\n') printf(" ");
+                                    else if (!p[i]) printf(" ");
+                                    else printf("%c", p[i]);
+                                }
+                                printf("|\n");
+                                printf("\n");
+                            }
+#endif
+
 
                             lexbuf cb = _mm256_loadu_si256((void*) p);
                             lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
@@ -665,44 +706,41 @@ main(int argc, char** argv)
     char* fname = argv[1];
     g_fname = fname; // TODO: Temporary
 
-#if 1
+#if 0
     FILE* f = fopen(fname, "rb");
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+    char* string = calloc(fsize /* + nlex ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
     fread(string, 1, fsize, f);
 #else
-    isize fsize;
-    char* string;
-    struct stat st;
     int fd = open(fname, O_RDONLY);
-
-    /* Get the size of the file. */
-    fstat(fd, &st); // TODO: Check retval of stat and fail
-    fsize = st.st_size;
-    string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    struct stat st;
+    fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
+    isize fsize = st.st_size;
+    char* string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 #endif
 
     ASSERT(fsize > 64); // TODO: !!!!
-    parse_state state;
+    lex_state state;
     state.string = string;
     state.string_end = string + fsize - 64; // TODO: DOn't hardcode 64
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
+    state.in = IN_NONE;
 
     char* p = lex(&state);
     int offset = p - state.string_end;
     char string_tail[64 + 64]; // TODO: Don't hardcode!
-    memset(string_tail, ' ', 64 + 64);
+    memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
 
     state.string = string_tail;
-    state.string_end = string_tail + sizeof(string_tail) - offset;
-    p = lex(&state);
+    state.string_end = string_tail + 64 - offset;
 
 #if PRINT_LINES
+    printf("----------------------------------------------------------------\n");
     {
         printf("|");
         for (u32 i = 0; i < sizeof(string_tail) - offset; ++i)
@@ -717,6 +755,7 @@ main(int argc, char** argv)
         printf("|\n");
     }
 #endif
+    p = lex(&state);
 
     fprintf(stdout, "Parsed: "
             "%ld lines, %ld ids, %ld strings, "
