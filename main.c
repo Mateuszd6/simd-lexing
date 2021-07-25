@@ -1,3 +1,5 @@
+// TODO: Test both comments and a string at the end of a file (second parse)
+
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
@@ -340,7 +342,7 @@ repeat_doublequote_seek:
                     {
                         i32 end_idx = __builtin_ctz(nb_mm);
 
-#if 0
+#if 0 // TODO: Revive this?
                         if (UNLIKELY(nl_end_idx < end_idx))
                         {
                             printf("Newline is before doublequote, lex error?\n");
@@ -444,6 +446,12 @@ skip_long:
                         p = x + 1;
                         for (;; p += sizeof(lexbuf))
                         {
+                            if (UNLIKELY(p + 32 >= string_end))
+                            {
+                                // state = STATE_IN_COMMENT: // TODO
+                                goto finalize;
+                            }
+
                             lexbuf cb = _mm256_loadu_si256((void*) p);
                             lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
@@ -465,6 +473,7 @@ skip_long:
                     {
                         printf("%s:%ld:%ld: /* comment", g_fname, curr_line, curr_inline_idx + idx);
 
+                        // TODO: Potencially passing 0 to ctz
                         u64 c = s & longcomm_mmask;
                         if (c && __builtin_ctzll(c) < __builtin_ctzll(s & newline_mmask))
                         {
@@ -637,9 +646,11 @@ skip_long:
 continue_outer:
     }
 
+finalize:
     // Update state:
     // state->string;
     // state->string_end;
+    // TODO: set additional state in comment/in string etc
     state->curr_line = curr_line;
     state->curr_inline_idx = curr_inline_idx;
     state->carry = carry;
@@ -681,26 +692,23 @@ main(int argc, char** argv)
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
 
-
-    //
-    // TODO IMPORTANT: Make soft and hard string delim and make sure that we
-    // don't out-of-range when we read comments or string in the loop! And this
-    // must be in the loop above!
-    //
-
     char* p = lex(&state);
     int offset = p - state.string_end;
     char string_tail[64 + 64]; // TODO: Don't hardcode!
     memset(string_tail, ' ', 64 + 64);
-    memcpy(string_tail, state.string_end + offset, 64);
+    memcpy(string_tail, state.string_end + offset, 64 - offset);
+
+    state.string = string_tail;
+    state.string_end = string_tail + sizeof(string_tail) - offset;
+    p = lex(&state);
 
 #if PRINT_LINES
     {
         printf("|");
-        for (u32 i = 0; i < sizeof(string_tail); ++i)
+        for (u32 i = 0; i < sizeof(string_tail) - offset; ++i)
             printf("%d", i % 10);
         printf("|\n|");
-        for (u32 i = 0; i < sizeof(string_tail); ++i)
+        for (u32 i = 0; i < sizeof(string_tail) - offset; ++i)
         {
             if (string_tail[i] == '\n') printf(" ");
             else if (!string_tail[i]) printf(" ");
