@@ -1,6 +1,7 @@
 // TODO: Test both comments and a string at the end of a file (second parse)
 // TODO: Bugs when last \ is in one lex window and " is in the next one (we won't look for " if we see \)
 // TODO: Generally, strigs near the end is broken
+// TODO: Gcc seem to support things like \000
 
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
@@ -502,7 +503,6 @@ in_short_comment:
                             }
 #endif
 
-
                             lexbuf cb = _mm256_loadu_si256((void*) p);
                             lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
@@ -735,7 +735,7 @@ main(int argc, char** argv)
     struct stat st;
     fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
     isize fsize = st.st_size;
-    char* string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
     ASSERT(fsize > 64); // TODO: !!!!
