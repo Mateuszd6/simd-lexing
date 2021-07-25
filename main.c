@@ -233,7 +233,7 @@ lex(lex_state* state)
 
         // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
         // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
-        // get advantage of this!
+        // get advantage of this! TODO: Below can be done branchless!
         if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
         else carry = CARRY_NONE;
 
