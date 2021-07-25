@@ -1,4 +1,6 @@
 // TODO: Test both comments and a string at the end of a file (second parse)
+// TODO: Bugs when last \ is in one lex window and " is in the next one (we won't look for " if we see \)
+// TODO: Generally, strigs near the end is broken
 
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
@@ -114,7 +116,7 @@ lex(lex_state* state)
         switch (state->in) {
         case IN_STRING: goto in_string;
         case IN_SHORT_COMMENT: goto in_short_comment;
-            // case IN_LONG_COMMENT: goto
+        case IN_LONG_COMMENT: goto in_long_comment;
         default: NOTREACHED;
         }
     }
@@ -310,7 +312,15 @@ lex(lex_state* state)
                 for (;; x += sizeof(lexbuf))
 in_string:
                 {
-                    lexbuf nb = _mm256_loadu_si256((void *)x);
+                    if (UNLIKELY(x >= string_end))
+                    {
+                        printf("Cannot parse further, breaking and saving state!\n");
+                        state->in = IN_STRING;
+                        p = x;
+                        goto finalize;
+                    }
+
+                    lexbuf nb = _mm256_loadu_si256((void *) x);
                     lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
                     lexbuf nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
@@ -516,7 +526,8 @@ in_short_comment:
 
                         // TODO: Potencially passing 0 to ctz
                         u64 c = s & longcomm_mmask;
-                        if (c && __builtin_ctzll(c) < __builtin_ctzll(s & newline_mmask))
+                        u64 c2 = s & newline_mmask;
+                        if (c && (!c2 || __builtin_ctzll(c) < __builtin_ctzll(c2)))
                         {
                             printf("  (short)\n");
                             n_long_comments_skipped++;
@@ -532,14 +543,22 @@ in_short_comment:
                             p = x + 2;
                             curr_inline_idx += idx + 2;
                             printf("  (long)\n");
-                            for (;;)
+                            for (;; p += sizeof(lexbuf))
                             {
+in_long_comment:
+                                if (UNLIKELY(p >= string_end))
+                                {
+                                    printf("Cannot parse further, breaking and saving state!\n");
+                                    state->in = IN_LONG_COMMENT;
+                                    goto finalize;
+                                }
+
                                 lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
                                 lexbuf cb_1 = _mm256_loadu_si256((void*) p);
 #if 0
-                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1);
+                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1); // TODO: This is incorrect, remove
 #else
-                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1)); // TODO: This is incurrect
+                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
 #endif
 
                                 lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
@@ -605,8 +624,6 @@ in_short_comment:
                                 {
                                     curr_inline_idx += 32;
                                 }
-
-                                p += sizeof(lexbuf);
                             }
 
                             // curr_inline_idx += 2;
