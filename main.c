@@ -55,48 +55,37 @@ u32_loadu(void* p)
     return retval;
 }
 
-int
-main(int argc, char** argv)
-{
-    if (argc < 2) fatal("Need a file");
-    char* fname = argv[1];
-
+// TODO: Get rid of them?
 #if 1
-    FILE* f = fopen(fname, "rb");
-    fseek(f, 0, SEEK_END);
-    isize fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
-    char* p = string;
-    fread(string, 1, fsize, f);
-#else
-    isize fsize;
-    char* string;
-    struct stat st;
-    int fd = open(fname, O_RDONLY);
-
-    /* Get the size of the file. */
-    fstat(fd, &st); // TODO: Check retval of stat and fail
-    fsize = st.st_size;
-
-    string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    for (i64 i = fsize - nlex; i < fsize; ++i)
-        string[i] = 0;
-    fsize -= nlex;
-    char* p = string;
+static i64 n_parsed_idents = 0;
+static i64 n_parsed_numbers = 0;
+static i64 n_parsed_strings = 0;
+static i64 n_parsed_chars = 0;
+static i64 n_single_comments = 0;
+static i64 n_long_comments = 0;
+static i64 n_single_comments_skipped = 0;
+static i64 n_long_comments_skipped = 0;
+static char* g_fname = 0;
 #endif
 
-    i64 curr_line = 1;
-    i64 curr_inline_idx = 1;
-    i32 carry = CARRY_NONE;
-    i64 n_parsed_idents = 0;
-    i64 n_parsed_numbers = 0;
-    i64 n_parsed_strings = 0;
-    i64 n_parsed_chars = 0;
-    i64 n_single_comments = 0;
-    i64 n_long_comments = 0;
-    i64 n_single_comments_skipped = 0;
-    i64 n_long_comments_skipped = 0;
+typedef struct parse_state parse_state;
+struct parse_state
+{
+    char* string;
+    char* string_end;
+    i64 curr_line;
+    i64 curr_inline_idx;
+    i32 carry;
+};
+
+static char*
+lex(parse_state* state)
+{
+    char* p = state->string;
+    char* string_end = state->string_end;
+    i64 curr_line = state->curr_line;
+    i64 curr_inline_idx = state->curr_inline_idx;
+    i32 carry = state->carry;
 
     lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
     lexbuf cmpmask_9 = _mm256_set1_epi8('9' + 1);
@@ -109,8 +98,7 @@ main(int argc, char** argv)
     lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
     lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
 
-    for (;;)
-continue_outer:
+    while (p < string_end)
     {
         lexbuf b_1 = _mm256_loadu_si256((void*) p);
         lexbuf b_2 = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)));
@@ -256,6 +244,8 @@ continue_outer:
             i32 idx = __builtin_ctzll(s);
             char* x = p + idx;
             s = (s & (s - 1));
+
+            // TODO: Make sure that the next is also a character, not any match?
             u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift? */
 
             if (newline_mmask & ((u64)1 << idx)) // TODO: Unlikely? Perhaps not so much?
@@ -282,7 +272,7 @@ continue_outer:
                 NOOPTIMIZE(wsidx); /* TODO */
 
                 printf("%s:%ld:%ld: TOK (L = %d): \"",
-                       fname, curr_line, curr_inline_idx + idx, wsidx - idx);
+                       g_fname, curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
                 if ('0' <= x[0] && x[0] <= '9') n_parsed_numbers++;
@@ -290,7 +280,7 @@ continue_outer:
             }
             else if (x[0] == '"') // TODO: probably move down? Does it matter?
             {
-                printf("%s:%ld:%ld: TOK: STRING START\n", fname, curr_line, curr_inline_idx + idx);
+                printf("%s:%ld:%ld: TOK: STRING START\n", g_fname, curr_line, curr_inline_idx + idx);
                 curr_inline_idx += idx + 1; // TODO: try to avoid here?
                 char* strstart = x++;
 
@@ -398,7 +388,7 @@ repeat_doublequote_seek:
                 }
 
                 printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
-                       fname, curr_line, curr_inline_idx + idx,
+                       g_fname, curr_line, curr_inline_idx + idx,
                        x[1] != '\\' ? 1 : 2, x + 1);
 
                 // TODO: NOTREACHED if bad sequence
@@ -473,7 +463,7 @@ skip_long:
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
-                        printf("%s:%ld:%ld: /* comment", fname, curr_line, curr_inline_idx + idx);
+                        printf("%s:%ld:%ld: /* comment", g_fname, curr_line, curr_inline_idx + idx);
 
                         u64 c = s & longcomm_mmask;
                         if (c && __builtin_ctzll(c) < __builtin_ctzll(s & newline_mmask))
@@ -577,11 +567,11 @@ skip_long:
                         }
                     }
                     else if (    w3 == TOK3('>', '>', '=')
-                             || (w3 == TOK3('<', '<', '='))
-                             || (w3 == TOK3('.', '.', '.')))
+                                 || (w3 == TOK3('<', '<', '='))
+                                 || (w3 == TOK3('.', '.', '.')))
                     {
                         printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
-                               fname, curr_line, curr_inline_idx + idx, 3, x);
+                               g_fname, curr_line, curr_inline_idx + idx, 3, x);
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 2;
@@ -620,7 +610,7 @@ skip_long:
                         // TODO: This should match */, because if we find this token
                         // here it means we should end parsing with a lexing error
                         printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
-                               fname, curr_line, curr_inline_idx + idx, 2, x);
+                               g_fname, curr_line, curr_inline_idx + idx, 2, x);
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 1;
@@ -638,22 +628,93 @@ skip_long:
                 }
 
                 NOOPTIMIZE(x[0]);
-                printf("%s:%ld:%ld: TOK: \"%c\"\n", fname, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
+                printf("%s:%ld:%ld: TOK: \"%c\"\n", g_fname, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
             }
         }
 
         p += 2 * nlex;
         curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
-
-        if (p - string >= fsize) break;
-        continue;
+continue_outer:
     }
+
+    // Update state:
+    // state->string;
+    // state->string_end;
+    state->curr_line = curr_line;
+    state->curr_inline_idx = curr_inline_idx;
+    state->carry = carry;
+
+    return p;
+}
+
+int
+main(int argc, char** argv)
+{
+    if (argc < 2) fatal("Need a file");
+    char* fname = argv[1];
+    g_fname = fname; // TODO: Temporary
+
+#if 1
+    FILE* f = fopen(fname, "rb");
+    fseek(f, 0, SEEK_END);
+    isize fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* string = calloc(fsize + nlex/* ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+    fread(string, 1, fsize, f);
+#else
+    isize fsize;
+    char* string;
+    struct stat st;
+    int fd = open(fname, O_RDONLY);
+
+    /* Get the size of the file. */
+    fstat(fd, &st); // TODO: Check retval of stat and fail
+    fsize = st.st_size;
+    string = (char *) mmap(0, fsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+#endif
+
+    ASSERT(fsize > 64); // TODO: !!!!
+    parse_state state;
+    state.string = string;
+    state.string_end = string + fsize - 64; // TODO: DOn't hardcode 64
+    state.curr_line = 1;
+    state.curr_inline_idx = 1;
+    state.carry = CARRY_NONE;
+
+
+    //
+    // TODO IMPORTANT: Make soft and hard string delim and make sure that we
+    // don't out-of-range when we read comments or string in the loop! And this
+    // must be in the loop above!
+    //
+
+    char* p = lex(&state);
+    int offset = p - state.string_end;
+    char string_tail[64 + 64]; // TODO: Don't hardcode!
+    memset(string_tail, ' ', 64 + 64);
+    memcpy(string_tail, state.string_end + offset, 64);
+
+#if PRINT_LINES
+    {
+        printf("|");
+        for (u32 i = 0; i < sizeof(string_tail); ++i)
+            printf("%d", i % 10);
+        printf("|\n|");
+        for (u32 i = 0; i < sizeof(string_tail); ++i)
+        {
+            if (string_tail[i] == '\n') printf(" ");
+            else if (!string_tail[i]) printf(" ");
+            else printf("%c", string_tail[i]);
+        }
+        printf("|\n");
+    }
+#endif
 
     fprintf(stdout, "Parsed: "
             "%ld lines, %ld ids, %ld strings, "
             "%ld chars, %ld ints, %ld hex,   %ld floats,    "
             "%ld //s, %ld /**/s,   0 #foo\n",
-            curr_line, n_parsed_idents, n_parsed_strings,
+            state.curr_line, n_parsed_idents, n_parsed_strings,
             n_parsed_chars, n_parsed_numbers, 0L, 0L,
             n_single_comments, n_long_comments);
 
