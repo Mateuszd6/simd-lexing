@@ -718,6 +718,12 @@ main(int argc, char** argv)
 
 #if 0
     FILE* f = fopen(fname, "rb");
+    if (UNLIKELY(!f))
+    {
+        fprintf(stderr, "%s: Could not open file '%s' for reading\n", argv[0], fname);
+        exit(1);
+    }
+
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -725,6 +731,12 @@ main(int argc, char** argv)
     fread(string, 1, fsize, f);
 #else
     int fd = open(fname, O_RDONLY);
+    if (UNLIKELY(fd == -1))
+    {
+        fprintf(stderr, "%s: Could not open file '%s' for reading\n", argv[0], fname);
+        exit(1);
+    }
+
     struct stat st;
     fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
     isize fsize = st.st_size;
@@ -804,7 +816,7 @@ main(int argc, char** argv)
                 state.string++;
             }
 
-            if (UNLIKELY(state.string >= state.string_end))
+            if (UNLIKELY(state.string >= state.string_end - 1))
             {
                 fprintf(stderr, "Unterminated long comment at EOF!\n");
                 exit(1);
@@ -834,7 +846,29 @@ main(int argc, char** argv)
         printf("|\n");
     }
 #endif
+
     p = lex(&state);
+    if (UNLIKELY(state.in != IN_NONE))
+    {
+        switch (state.in) {
+        case IN_STRING:
+        {
+            fprintf(stderr, "Unterminated string at the end of a file\n");
+            exit(1);
+        } break;
+        case IN_SHORT_COMMENT:
+        {
+            fprintf(stderr, "Unterminated short comment at the end of a file\n");
+            exit(1);
+        } break;
+        case IN_LONG_COMMENT:
+        {
+            fprintf(stderr, "Unterminated long comment at the end of a file\n");
+            exit(1);
+        } break;
+        default: NOTREACHED;
+        }
+    }
 
     fprintf(stdout, "Parsed: "
             "%ld lines, %ld ids, %ld strings, "
