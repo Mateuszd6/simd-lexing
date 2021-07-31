@@ -312,6 +312,7 @@ lex(lex_state* state)
                         printf("Cannot parse further, breaking and saving state!\n");
                         state->in = IN_STRING;
                         p = x;
+                        curr_inline_idx += x - strstart - 1;
                         goto finalize;
                     }
 
@@ -753,20 +754,32 @@ main(int argc, char** argv)
         case IN_STRING:
         {
             while (state.string < state.string_end && *state.string != '"') // TODO: Check backqotes correctly!
-                ++state.string;
+            {
+                // TODO: Check for buggy -1 when newline is at the beginning of the buffer:
+                if (UNLIKELY(*state.string == '\n' && *(state.string - 1) != '\\'))
+                {
+                    state.curr_inline_idx = 0;
+                    state.curr_line++;
+                }
+
+                state.curr_inline_idx++;
+                state.string++;
+            }
+
             if (UNLIKELY(state.string >= state.string_end))
             {
                 fprintf(stderr, "Unterminated string comment at EOF!\n");
                 exit(1);
             }
 
-            ++state.string;
+            state.curr_inline_idx++;
+            state.string++;
         } break;
         case IN_SHORT_COMMENT:
         {
             // TODO: Check for buggy -1 when newline is at the beginning of the buffer
             while (state.string < state.string_end && (*state.string != '\n' || *(state.string - 1) == '\\'))
-                ++state.string;
+                state.string++;
             if (UNLIKELY(state.string >= state.string_end))
             {
                 fprintf(stderr, "Unterminated short comment at EOF!\n");
@@ -788,7 +801,7 @@ main(int argc, char** argv)
                 }
 
                 state.curr_inline_idx++;
-                ++state.string;
+                state.string++;
             }
 
             if (UNLIKELY(state.string >= state.string_end))
