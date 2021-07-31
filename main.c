@@ -108,19 +108,15 @@ lex(lex_state* state)
     lexbuf cmpmask_A = _mm256_set1_epi8('A' - 1);
     lexbuf cmpmask_Z = _mm256_set1_epi8('Z' + 1);
     lexbuf cmpmask_underscore = _mm256_set1_epi8('_');
+
+    /* TODO: Add ability to also use these in token */
+    /* lexbuf cmpmask_sinlequote = _mm256_set1_epi8('\''); */
+    /* lexbuf cmpmask_dollar = _mm256_set1_epi8('$'); */
+
     lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
     lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
     lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
-
-    if (UNLIKELY(state->in != IN_NONE))
-    {
-        switch (state->in) {
-        case IN_STRING: goto in_string;
-        case IN_SHORT_COMMENT: goto in_short_comment;
-        case IN_LONG_COMMENT: goto in_long_comment;
-        default: NOTREACHED;
-        }
-    }
+    ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
     {
@@ -309,9 +305,7 @@ lex(lex_state* state)
                 char* strstart = x++;
 
                 // TODO: Don't increment index in the loop, calculate adv from the start?
-
                 for (;; x += sizeof(lexbuf))
-in_string:
                 {
                     if (UNLIKELY(x >= string_end))
                     {
@@ -476,7 +470,6 @@ skip_long:
                         printf("  long comment\n");
                         p = x + 1;
                         for (;; p += sizeof(lexbuf))
-in_short_comment:
                         {
                             if (UNLIKELY(p >= string_end))
                             {
@@ -545,7 +538,6 @@ in_short_comment:
                             printf("  (long)\n");
                             for (;; p += sizeof(lexbuf))
                             {
-in_long_comment:
                                 if (UNLIKELY(p >= string_end))
                                 {
                                     printf("Cannot parse further, breaking and saving state!\n");
@@ -745,7 +737,7 @@ main(int argc, char** argv)
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
-    state.in = IN_NONE;
+    state.in = IN_NONE; // TODO: No need to set, this is just an out param?
 
     char* p = lex(&state);
     int offset = p - state.string_end;
@@ -755,6 +747,46 @@ main(int argc, char** argv)
 
     state.string = string_tail;
     state.string_end = string_tail + 64 - offset;
+    if (UNLIKELY(state.in != IN_NONE))
+    {
+        switch (state.in) {
+        case IN_STRING:
+        {
+            while (p < state.string_end && *p != '"') // TODO: Check backqotes correctly!
+                ++p;
+
+            if (UNLIKELY(p >= state.string_end))
+            {
+                fprintf(stderr, "Unterminated string comment at EOF!\n");
+                exit(1);
+            }
+        } break;
+        case IN_SHORT_COMMENT:
+        {
+            while (p < state.string_end && *p != '\n' && *(p - 1) != '\\')
+                ++p;
+
+            if (UNLIKELY(p >= state.string_end))
+            {
+                fprintf(stderr, "Unterminated short comment at EOF!\n");
+                exit(1);
+            }
+        } break;
+        case IN_LONG_COMMENT:
+        {
+            while (p < state.string_end && *p != '/' && *(p - 1) != '*')
+                ++p;
+
+            if (UNLIKELY(p >= state.string_end))
+            {
+                fprintf(stderr, "Unterminated long comment at EOF!\n");
+                exit(1);
+            }
+        } break;
+        default: NOTREACHED;
+        }
+    }
+    state.in = IN_NONE; // TODO: No need to set, this is just an out param?;
 
 #if PRINT_LINES
     printf("----------------------------------------------------------------\n");
