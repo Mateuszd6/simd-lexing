@@ -752,36 +752,53 @@ main(int argc, char** argv)
         switch (state.in) {
         case IN_STRING:
         {
-            while (p < state.string_end && *p != '"') // TODO: Check backqotes correctly!
-                ++p;
-
-            if (UNLIKELY(p >= state.string_end))
+            while (state.string < state.string_end && *state.string != '"') // TODO: Check backqotes correctly!
+                ++state.string;
+            if (UNLIKELY(state.string >= state.string_end))
             {
                 fprintf(stderr, "Unterminated string comment at EOF!\n");
                 exit(1);
             }
+
+            ++state.string;
         } break;
         case IN_SHORT_COMMENT:
         {
-            while (p < state.string_end && *p != '\n' && *(p - 1) != '\\')
-                ++p;
-
-            if (UNLIKELY(p >= state.string_end))
+            // TODO: Check for buggy -1 when newline is at the beginning of the buffer
+            while (state.string < state.string_end && (*state.string != '\n' || *(state.string - 1) == '\\'))
+                ++state.string;
+            if (UNLIKELY(state.string >= state.string_end))
             {
                 fprintf(stderr, "Unterminated short comment at EOF!\n");
                 exit(1);
             }
+
+            state.curr_line++;
+            state.curr_inline_idx = 1;
+            state.string++;
         } break;
         case IN_LONG_COMMENT:
         {
-            while (p < state.string_end && *p != '/' && *(p - 1) != '*')
-                ++p;
+            while (state.string < state.string_end - 1 && (*state.string != '*' || *(state.string + 1) != '/'))
+            {
+                if (UNLIKELY(*state.string == '\n'))
+                {
+                    state.curr_inline_idx = 0;
+                    state.curr_line++;
+                }
 
-            if (UNLIKELY(p >= state.string_end))
+                state.curr_inline_idx++;
+                ++state.string;
+            }
+
+            if (UNLIKELY(state.string >= state.string_end))
             {
                 fprintf(stderr, "Unterminated long comment at EOF!\n");
                 exit(1);
             }
+
+            state.curr_inline_idx += 2;
+            state.string += 2;
         } break;
         default: NOTREACHED;
         }
