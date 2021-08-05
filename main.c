@@ -1,3 +1,5 @@
+// TODO: \-NL is broken on windows, because the newlines there are \-CR-NL
+
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
