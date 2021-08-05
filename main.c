@@ -52,11 +52,8 @@ enum lex_in
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
-    /* TODO: This is probably slow, figure out better way! */
-    u64 carry = (u64) ((u8) _mm256_extract_epi8(a, 15));
-    __m256i shifted = _mm256_bslli_epi128(a, 1);
-    __m256i andcarry = _mm256_set_epi64x(0, carry, 0, 0);
-    return _mm256_or_si256(shifted, andcarry);
+    __m256i mask = _mm256_permute2x128_si256(a, a, _MM_SHUFFLE(0, 0, 3, 0));
+    return _mm256_alignr_epi8(a, mask, 16-1);
 }
 
 static inline u32
@@ -108,20 +105,22 @@ lex(lex_state* state)
     lexbuf cmpmask_A = _mm256_set1_epi8('A' - 1);
     lexbuf cmpmask_Z = _mm256_set1_epi8('Z' + 1);
     lexbuf cmpmask_underscore = _mm256_set1_epi8('_');
-
     /* TODO: Add ability to also use these in token */
     /* lexbuf cmpmask_sinlequote = _mm256_set1_epi8('\''); */
     /* lexbuf cmpmask_dollar = _mm256_set1_epi8('$'); */
-
     lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
     lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
+    lexbuf long_comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
     lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
     ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
     {
         lexbuf b_1 = _mm256_loadu_si256((void*) p);
+        lexbuf b_1_shed = mm_ext_shl8_si256(b_1);
+
         lexbuf b_2 = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)));
+        lexbuf b_2_shed = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)) + 1);
 
         lexbuf charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
         lexbuf charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
@@ -158,15 +157,11 @@ lex(lex_state* state)
         lexbuf nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
 
 #if 1 // TODO : if it is slower, don't do it?
-        // TODO: Maybe do these only once?
-        lexbuf b1_shed = mm_ext_shl8_si256(b_1);
-        lexbuf b2_shed = mm_ext_shl8_si256(b_2);
-        lexbuf long_comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
 
         lexbuf long_comment_end_mask1_1 = _mm256_cmpeq_epi16(b_1, long_comment_end);
-        lexbuf long_comment_end_mask2_1 = _mm256_cmpeq_epi16(b1_shed, long_comment_end);
+        lexbuf long_comment_end_mask2_1 = _mm256_cmpeq_epi16(b_1_shed, long_comment_end);
         lexbuf long_comment_end_mask1_2 = _mm256_cmpeq_epi16(b_2, long_comment_end);
-        lexbuf long_comment_end_mask2_2 = _mm256_cmpeq_epi16(b2_shed, long_comment_end);
+        lexbuf long_comment_end_mask2_2 = _mm256_cmpeq_epi16(b_2_shed, long_comment_end);
 
         u32 longcomm_m1_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_1);
         u32 longcomm_m1_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_2);
@@ -547,13 +542,9 @@ skip_long:
                                 }
 
                                 lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
+                                // TODO: This is very misleading, cb_2 is _before_ cb_1 !!
                                 lexbuf cb_1 = _mm256_loadu_si256((void*) p);
-#if 0
-                                lexbuf cb_2 = mm_ext_shl8_si256(cb_1); // TODO: This is incorrect, remove
-#else
                                 lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
-#endif
-
                                 lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
                                 lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
                                 lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);

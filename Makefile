@@ -11,7 +11,7 @@ all:
 	    # -fstrict-aliasing                                                        \
 	    # main.c -o main
 
-	# # COVERAGE
+	# # RELEASE
 	# gcc -O3 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function              \
 	    # -march=native                                                            \
 	    # -fstrict-aliasing                                                        \
