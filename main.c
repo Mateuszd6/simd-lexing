@@ -1,7 +1,7 @@
-#define USE_MMAP 0
-
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
+
+#define USE_MMAP 0
 
 #ifdef _MSC_VER
 #  define _CRT_SECURE_NO_DEPRECATE
@@ -28,7 +28,11 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #  undef ASSERT
 #  define ASSERT(...)
 #  define printf(...) ((void) 0)
-#  define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory");
+#  if (defined(__GNUC__)) || (defined(__clang__))
+#    define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory")
+#  else
+#    define NOOPTIMIZE(EXPR) (void) (EXPR)
+#  endif
 #  define PRINT_LINES 0
 #else
 #  define NOOPTIMIZE(EXPR) ((void) 0)
@@ -649,7 +653,7 @@ skip_long:
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 2;
-                        u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                        u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
                         {
                             p += idx + skip_idx + 1;
@@ -688,7 +692,7 @@ skip_long:
 
                         // TODO: move outer for common code?
                         u64 skip_idx = 1;
-                        u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                        u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
                         {
                             p += idx + skip_idx + 1;
