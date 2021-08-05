@@ -358,7 +358,7 @@ lex(lex_state* state)
                                 }
                             }
 
-                            printf("Unescaped newline in the middle of the string\n");
+                            fprintf(stderr, "Unescaped newline in the middle of the string\n");
                             exit(1);
                         }
                     }
@@ -746,7 +746,7 @@ main(int argc, char** argv)
     ASSERT(fsize > 64); // TODO: !!!!
     lex_state state;
     state.string = string;
-    state.string_end = string + fsize - 64; // TODO: DOn't hardcode 64
+    state.string_end = string + fsize - 64; // TODO: Don't hardcode 64
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;

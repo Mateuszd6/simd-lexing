@@ -1,13 +1,15 @@
 #!/bin/sh
 
-./flex/c.default ./test2.c &> /dev/null
-time ./flex/c.default ./test2.c | tail -n2
+TESTFILE=./test2.c
+
+./flex/c.default $TESTFILE &> /dev/null
+time ./flex/c.default $TESTFILE | tail -n2
 echo ""
-./flex/c.fast ./test2.c &> /dev/null
-time ./flex/c.fast ./test2.c | tail -n2
+./flex/c.fast $TESTFILE &> /dev/null
+time ./flex/c.fast $TESTFILE | tail -n2
 echo ""
-./flex/c.full ./test2.c &> /dev/null
-time ./flex/c.full ./test2.c | tail -n2
+./flex/c.full $TESTFILE &> /dev/null
+time ./flex/c.full $TESTFILE | tail -n2
 echo ""
-./main ./test2.c &> /dev/null
-time ./main ./test2.c
+./main $TESTFILE &> /dev/null
+time ./main $TESTFILE
