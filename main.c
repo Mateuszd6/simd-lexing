@@ -73,8 +73,6 @@ static i64 n_parsed_strings = 0;
 static i64 n_parsed_chars = 0;
 static i64 n_single_comments = 0;
 static i64 n_long_comments = 0;
-static i64 n_single_comments_skipped = 0;
-static i64 n_long_comments_skipped = 0;
 static char* g_fname = 0;
 #endif
 
@@ -110,17 +108,13 @@ lex(lex_state* state)
     /* lexbuf cmpmask_dollar = _mm256_set1_epi8('$'); */
     lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
     lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
-    lexbuf long_comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
     lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
     ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
     {
         lexbuf b_1 = _mm256_loadu_si256((void*) p);
-        lexbuf b_1_shed = mm_ext_shl8_si256(b_1);
-
         lexbuf b_2 = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)));
-        lexbuf b_2_shed = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)) + 1);
 
         lexbuf charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
         lexbuf charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
@@ -156,7 +150,7 @@ lex(lex_state* state)
         lexbuf nidents_mask1_2 = _mm256_and_si256(idents_mask_2, idents_startmask1_2);
         lexbuf nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
 
-#if 1 // TODO : if it is slower, don't do it?
+#if 0 // TODO : if it is slower, don't do it?
 
         lexbuf long_comment_end_mask1_1 = _mm256_cmpeq_epi16(b_1, long_comment_end);
         lexbuf long_comment_end_mask2_1 = _mm256_cmpeq_epi16(b_1_shed, long_comment_end);
@@ -167,8 +161,8 @@ lex(lex_state* state)
         u32 longcomm_m1_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_2);
         u32 longcomm_m2_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_1);
         u32 longcomm_m2_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_2);
-        u32 longcomm_mmask_1 = longcomm_m1_1 | (longcomm_m2_1 >> 1);
-        u32 longcomm_mmask_2 = longcomm_m1_2 | (longcomm_m2_2 >> 1);
+        u32 longcomm_mmask_1 = longcomm_m1_1 | longcomm_m2_1;
+        u32 longcomm_mmask_2 = longcomm_m1_2 | longcomm_m2_2;
         u64 longcomm_mmask = ((u64) longcomm_mmask_1) | ((u64) longcomm_mmask_2) << 32;
 #endif
 
@@ -250,7 +244,23 @@ lex(lex_state* state)
                 else printf(" ");
             }
             printf("|\n");
+#if 0
+            printf("|");
+            for (int i = 0; i < 2 * nlex; ++i)
+            {
+                if (longcomm_mmask & ((u64)1 << i)) printf("*");
+                else printf(" ");
+            }
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < 2 * nlex; ++i)
+            {
+                if (newline_mmask & ((u64)1 << i)) printf("*");
+                else printf(" ");
+            }
+            printf("|\n");
             printf("\n");
+#endif
         }
 #endif
 
@@ -402,7 +412,30 @@ repeat_doublequote_seek:
             }
             else if (x[0] == '\'')
             {
-                u64 skip_idx = 2 + (x[1] == '\\');
+                u64 skip_idx = 2;
+                if (x[1] == '\\')
+                {
+                    if (LIKELY(x[3] == '\''))
+                    {
+                        skip_idx = 3;
+                    }
+                    else
+                    {
+                        skip_idx = 5;
+                        if (UNLIKELY(x[2] < '0')
+                            || UNLIKELY(x[3] < '0')
+                            || UNLIKELY(x[4] < '0')
+                            || UNLIKELY(x[2] > '9')
+                            || UNLIKELY(x[3] > '9')
+                            || UNLIKELY(x[4] > '9')
+                            || UNLIKELY(x[5] != '\''))
+                        {
+                            printf("BAD_: %c %c %c _ \"%.*s\"\n", x[2], x[3], x[4], 8, x);
+                            NOTREACHED;
+                        }
+                    }
+                }
+
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 if (UNLIKELY(skip_idx == 2 && x[2] != '\''))
                 {
@@ -458,7 +491,6 @@ repeat_doublequote_seek:
 
                             s &= ~(((u64)1 << comment_end_idx) - 1);
                             n_single_comments++;
-                            n_single_comments_skipped++;
                             continue;
                         }
 
@@ -512,110 +544,92 @@ skip_long:
                     else if (w2 == TOK2('/', '*'))
                     {
                         printf("%s:%ld:%ld: /* comment", g_fname, curr_line, curr_inline_idx + idx);
-
-                        // TODO: Potencially passing 0 to ctz
-                        u64 c = s & longcomm_mmask;
-                        u64 c2 = s & newline_mmask;
-                        if (c && (!c2 || __builtin_ctzll(c) < __builtin_ctzll(c2)))
+                        p = x + 2;
+                        curr_inline_idx += idx + 2;
+                        printf("  (long)\n");
+                        for (;; p += sizeof(lexbuf))
                         {
-                            printf("  (short)\n");
-                            n_long_comments_skipped++;
-
-                            i32 tz = __builtin_ctzll(c);
-                            u64 adv_pow = (u64)1 << (tz + 1); // TODO: OVERFLOW HERE
-                            s &= ~(adv_pow | (adv_pow - 1));
-
-                            continue;
-                        }
-                        else
-                        {
-                            p = x + 2;
-                            curr_inline_idx += idx + 2;
-                            printf("  (long)\n");
-                            for (;; p += sizeof(lexbuf))
+                            if (UNLIKELY(p >= string_end))
                             {
-                                if (UNLIKELY(p >= string_end))
-                                {
-                                    printf("Cannot parse further, breaking and saving state!\n");
-                                    state->in = IN_LONG_COMMENT;
-                                    goto finalize;
-                                }
+                                printf("Cannot parse further, breaking and saving state!\n");
+                                state->in = IN_LONG_COMMENT;
+                                goto finalize;
+                            }
 
-                                lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
-                                // TODO: This is very misleading, cb_2 is _before_ cb_1 !!
-                                lexbuf cb_1 = _mm256_loadu_si256((void*) p);
-                                lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
-                                lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
-                                lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
-                                lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
-                                u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
-                                u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
-                                u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
+                            lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
+                            // TODO: This is very misleading, cb_2 is _before_ cb_1 !!
+                            lexbuf cb_1 = _mm256_loadu_si256((void*) p);
+                            lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
+                            lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
+                            lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
+                            lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
+                            u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
+                            u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
+                            u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
 
-                                // TODO: NEXT: Test both cases
-                                u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010;
-                                u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
+                            // TODO: NEXT: Test both cases
+                            u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010;
+                            u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
 
 #if PRINT_LINES
+                            {
+                                printf("|");
+                                for (int i = 0; i < nlex; ++i)
+                                    printf("%d", i % 10);
+                                printf("|\n");
+                                printf("|");
+                                for (int i = 0; i < nlex; ++i)
                                 {
-                                    printf("|");
-                                    for (int i = 0; i < nlex; ++i)
-                                        printf("%d", i % 10);
-                                    printf("|\n");
-                                    printf("|");
-                                    for (int i = 0; i < nlex; ++i)
-                                    {
-                                        if (p[i] == '\n') printf(" ");
-                                        else if (!p[i]) printf(" ");
-                                        else printf("%c", p[i]);
-                                    }
-                                    printf("|\n");
-                                    printf("\n");
+                                    if (p[i] == '\n') printf(" ");
+                                    else if (!p[i]) printf(" ");
+                                    else printf("%c", p[i]);
                                 }
+                                printf("|\n");
+                                printf("\n");
+                            }
 #endif
 
-                                u32 cb_mm = m1 | (m2 << 1);
-                                if (cb_mm)
-                                {
-                                    i32 tz = __builtin_ctz(cb_mm);
-                                    printf("tz = %d %d\n", tz, ((((u32)1 << tz) & (m2 << 1)) != 0));
+                            u32 cb_mm = m1 | (m2 << 1);
+                            if (cb_mm)
+                            {
+                                i32 tz = __builtin_ctz(cb_mm);
+                                printf("tz = %d %d\n", tz, ((((u32)1 << tz) & (m2 << 1)) != 0));
 
-                                    i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
-                                    u32 adv_pow = (u32)1 << tz;
-                                    cb_nl_mm &= adv_pow | (adv_pow - 1);
-                                    if (cb_nl_mm)
-                                    {
-                                        i32 nladv = 32 - __builtin_clz(cb_nl_mm);
-                                        ASSERT(nladv < adv);
-                                        curr_line += __builtin_popcount(cb_nl_mm);
-                                        curr_inline_idx = 1 + (adv - nladv);
-                                    }
-                                    else
-                                    {
-                                        curr_inline_idx += adv;
-                                    }
-
-                                    p += adv;
-                                    break;
-                                }
-
+                                i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
+                                u32 adv_pow = (u32)1 << tz;
+                                cb_nl_mm &= adv_pow | (adv_pow - 1);
                                 if (cb_nl_mm)
                                 {
+                                    i32 nladv = 32 - __builtin_clz(cb_nl_mm);
+                                    ASSERT(nladv < adv);
                                     curr_line += __builtin_popcount(cb_nl_mm);
-                                    curr_inline_idx = __builtin_clz(cb_nl_mm) + 1;
+                                    curr_inline_idx = 1 + (adv - nladv);
                                 }
                                 else
                                 {
-                                    curr_inline_idx += 32;
+                                    curr_inline_idx += adv;
                                 }
+
+                                p += adv;
+                                break;
                             }
 
-                            // curr_inline_idx += 2;
-                            // p += 2;
-                            carry = CARRY_NONE;
-                            n_long_comments++;
-                            goto continue_outer;
+                            if (cb_nl_mm)
+                            {
+                                curr_line += __builtin_popcount(cb_nl_mm);
+                                curr_inline_idx = __builtin_clz(cb_nl_mm) + 1;
+                            }
+                            else
+                            {
+                                curr_inline_idx += 32;
+                            }
                         }
+
+                        // curr_inline_idx += 2;
+                        // p += 2;
+                        carry = CARRY_NONE;
+                        n_long_comments++;
+                        goto continue_outer;
                     }
                     else if (    w3 == TOK3('>', '>', '=')
                                  || (w3 == TOK3('<', '<', '='))
