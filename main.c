@@ -144,23 +144,6 @@ lex(lex_state* state)
         lexbuf nidents_mask2_1 = _mm256_and_si256(idents_mask_shed_1, idents_startmask2_1);
         lexbuf nidents_mask1_2 = _mm256_and_si256(idents_mask_2, idents_startmask1_2);
         lexbuf nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
-
-#if 0 // TODO : if it is slower, don't do it?
-
-        lexbuf long_comment_end_mask1_1 = _mm256_cmpeq_epi16(b_1, long_comment_end);
-        lexbuf long_comment_end_mask2_1 = _mm256_cmpeq_epi16(b_1_shed, long_comment_end);
-        lexbuf long_comment_end_mask1_2 = _mm256_cmpeq_epi16(b_2, long_comment_end);
-        lexbuf long_comment_end_mask2_2 = _mm256_cmpeq_epi16(b_2_shed, long_comment_end);
-
-        u32 longcomm_m1_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_1);
-        u32 longcomm_m1_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask1_2);
-        u32 longcomm_m2_1 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_1);
-        u32 longcomm_m2_2 = (u32) _mm256_movemask_epi8(long_comment_end_mask2_2);
-        u32 longcomm_mmask_1 = longcomm_m1_1 | longcomm_m2_1;
-        u32 longcomm_mmask_2 = longcomm_m1_2 | longcomm_m2_2;
-        u64 longcomm_mmask = ((u64) longcomm_mmask_1) | ((u64) longcomm_mmask_2) << 32;
-#endif
-
         lexbuf newline_1 = _mm256_cmpeq_epi8(b_1, cmpmask_newline);
         lexbuf newline_2 = _mm256_cmpeq_epi8(b_2, cmpmask_newline);
 
@@ -239,23 +222,6 @@ lex(lex_state* state)
                 else printf(" ");
             }
             printf("|\n");
-#if 0
-            printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
-            {
-                if (longcomm_mmask & ((u64)1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
-            {
-                if (newline_mmask & ((u64)1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-            printf("\n");
-#endif
         }
 #endif
 
@@ -367,16 +333,6 @@ repeat_doublequote_seek:
                     if (nb_mm)
                     {
                         i32 end_idx = __builtin_ctz(nb_mm);
-
-#if 0 // TODO: Revive this?
-                        if (UNLIKELY(nl_end_idx < end_idx))
-                        {
-                            printf("Newline is before doublequote, lex error?\n");
-                            exit(1);
-                            // goto lex error
-                        }
-#endif
-
                         if (UNLIKELY(x[end_idx - 1] == '\\'))
                         {
                             // TODO: Could be extracted to a function
@@ -385,15 +341,12 @@ repeat_doublequote_seek:
                             while (*b-- == '\\')
                                 bslashes++;
 
+                            /* There is odd number of backslashes, so
+                               doublequote is cancelled-out */
                             if (bslashes & 1)
                             {
-                                printf("There are %d backslashes, so doublequote is cancelled-out\n", bslashes);
                                 nb_mm = (nb_mm & (nb_mm - 1));
                                 goto repeat_doublequote_seek;
-                            }
-                            else
-                            {
-                                printf("There are %d backslashes, this is a valid doublequote\n", bslashes);
                             }
                         }
 
@@ -416,6 +369,7 @@ repeat_doublequote_seek:
                     }
                     else
                     {
+                        /* Support three-num character literals ('\001') */
                         skip_idx = 5;
                         if (UNLIKELY(x[2] < '0')
                             || UNLIKELY(x[3] < '0')
