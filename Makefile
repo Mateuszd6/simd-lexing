@@ -18,7 +18,10 @@ all:
 	    # main.c -o main
 
 validate:
-	@./validate.sh # --snapshot
+	@./validate.sh
+
+snapshot:
+	@./validate.sh --snapshot
 
 clean:
 	rm -rf main

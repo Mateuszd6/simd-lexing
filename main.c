@@ -15,9 +15,10 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #  include <intrin.h>
 #endif
 
-#include <pmmintrin.h>
+/* TODO: These go to the library */
 #include <immintrin.h>
 
+/* TODO: These go to example file! */
 #if USE_MMAP
 #  include <fcntl.h>
 #  include <sys/mman.h>
@@ -95,9 +96,6 @@ intr_msvc_clz64(uint64_t mask)
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
 
-typedef __m256i lexbuf;
-static const int nlex = sizeof(lexbuf);
-
 enum carry
 {
     CARRY_NONE = 0,
@@ -159,61 +157,61 @@ lex(lex_state* state)
     i64 curr_inline_idx = state->curr_inline_idx;
     i32 carry = state->carry;
 
-    lexbuf cmpmask_0 = _mm256_set1_epi8('0' - 1);
-    lexbuf cmpmask_9 = _mm256_set1_epi8('9' + 1);
-    lexbuf cmpmask_a = _mm256_set1_epi8('a' - 1);
-    lexbuf cmpmask_z = _mm256_set1_epi8('z' + 1);
-    lexbuf cmpmask_A = _mm256_set1_epi8('A' - 1);
-    lexbuf cmpmask_Z = _mm256_set1_epi8('Z' + 1);
-    lexbuf cmpmask_underscore = _mm256_set1_epi8('_');
+    __m256i cmpmask_0 = _mm256_set1_epi8('0' - 1);
+    __m256i cmpmask_9 = _mm256_set1_epi8('9' + 1);
+    __m256i cmpmask_a = _mm256_set1_epi8('a' - 1);
+    __m256i cmpmask_z = _mm256_set1_epi8('z' + 1);
+    __m256i cmpmask_A = _mm256_set1_epi8('A' - 1);
+    __m256i cmpmask_Z = _mm256_set1_epi8('Z' + 1);
+    __m256i cmpmask_underscore = _mm256_set1_epi8('_');
     /* TODO: Add ability to also use these in token */
-    /* lexbuf cmpmask_sinlequote = _mm256_set1_epi8('\''); */
-    /* lexbuf cmpmask_dollar = _mm256_set1_epi8('$'); */
-    lexbuf cmpmask_newline = _mm256_set1_epi8('\n');
-    lexbuf cmpmask_doublequote = _mm256_set1_epi8('\"');
-    lexbuf cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
+    /* __m256i cmpmask_sinlequote = _mm256_set1_epi8('\''); */
+    /* __m256i cmpmask_dollar = _mm256_set1_epi8('$'); */
+    __m256i cmpmask_newline = _mm256_set1_epi8('\n');
+    __m256i cmpmask_doublequote = _mm256_set1_epi8('\"');
+    __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
     ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
     {
-        lexbuf b_1 = _mm256_loadu_si256((void*) p);
-        lexbuf b_2 = _mm256_loadu_si256((void*) (p + sizeof(lexbuf)));
+        __m256i b_1 = _mm256_loadu_si256((void*) p);
+        __m256i b_2 = _mm256_loadu_si256((void*) (p + sizeof(__m256i)));
 
-        lexbuf charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
-        lexbuf charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
+        __m256i charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
+        __m256i charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
 
-        lexbuf mask1_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_1));
-        lexbuf mask2_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_1));
-        lexbuf mask3_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_1));
-        lexbuf mask4_1 = _mm256_cmpeq_epi8(b_1, cmpmask_underscore);
+        __m256i mask1_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_1));
+        __m256i mask2_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_1));
+        __m256i mask3_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_1));
+        __m256i mask4_1 = _mm256_cmpeq_epi8(b_1, cmpmask_underscore);
 
-        lexbuf mask1_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_2));
-        lexbuf mask2_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_2));
-        lexbuf mask3_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
-        lexbuf mask4_2 = _mm256_cmpeq_epi8(b_2, cmpmask_underscore);
+        __m256i mask1_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_2));
+        __m256i mask2_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_2));
+        __m256i mask3_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
+        __m256i mask4_2 = _mm256_cmpeq_epi8(b_2, cmpmask_underscore);
 
-        lexbuf idents_mask_1 = _mm256_or_si256(_mm256_or_si256(mask1_1, mask2_1), _mm256_or_si256(mask3_1, mask4_1));
-        lexbuf idents_mask_2 = _mm256_or_si256(_mm256_or_si256(mask1_2, mask2_2), _mm256_or_si256(mask3_2, mask4_2));
+        __m256i idents_mask_1 = _mm256_or_si256(_mm256_or_si256(mask1_1, mask2_1), _mm256_or_si256(mask3_1, mask4_1));
+        __m256i idents_mask_2 = _mm256_or_si256(_mm256_or_si256(mask1_2, mask2_2), _mm256_or_si256(mask3_2, mask4_2));
 
         // TODO: Try not to shift it
-        lexbuf idents_mask_shed_1 = mm_ext_shl8_si256(idents_mask_1);
-        lexbuf idents_mask_shed_2 = mm_ext_shl8_si256(idents_mask_2);
+        __m256i idents_mask_shed_1 = mm_ext_shl8_si256(idents_mask_1);
+        __m256i idents_mask_shed_2 = mm_ext_shl8_si256(idents_mask_2);
 
-        lexbuf toks_mask_1 = _mm256_andnot_si256(idents_mask_1, charmask_1);
-        lexbuf toks_mask_2 = _mm256_andnot_si256(idents_mask_2, charmask_2);
+        __m256i toks_mask_1 = _mm256_andnot_si256(idents_mask_1, charmask_1);
+        __m256i toks_mask_2 = _mm256_andnot_si256(idents_mask_2, charmask_2);
 
-        lexbuf ident_start = _mm256_set1_epi16((u16) 0xFF00);
-        lexbuf idents_startmask1_1 = _mm256_cmpeq_epi16(idents_mask_1, ident_start);
-        lexbuf idents_startmask2_1 = _mm256_cmpeq_epi16(idents_mask_shed_1, ident_start);
-        lexbuf idents_startmask1_2 = _mm256_cmpeq_epi16(idents_mask_2, ident_start);
-        lexbuf idents_startmask2_2 = _mm256_cmpeq_epi16(idents_mask_shed_2, ident_start);
+        __m256i ident_start = _mm256_set1_epi16((u16) 0xFF00);
+        __m256i idents_startmask1_1 = _mm256_cmpeq_epi16(idents_mask_1, ident_start);
+        __m256i idents_startmask2_1 = _mm256_cmpeq_epi16(idents_mask_shed_1, ident_start);
+        __m256i idents_startmask1_2 = _mm256_cmpeq_epi16(idents_mask_2, ident_start);
+        __m256i idents_startmask2_2 = _mm256_cmpeq_epi16(idents_mask_shed_2, ident_start);
 
-        lexbuf nidents_mask1_1 = _mm256_and_si256(idents_mask_1, idents_startmask1_1);
-        lexbuf nidents_mask2_1 = _mm256_and_si256(idents_mask_shed_1, idents_startmask2_1);
-        lexbuf nidents_mask1_2 = _mm256_and_si256(idents_mask_2, idents_startmask1_2);
-        lexbuf nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
-        lexbuf newline_1 = _mm256_cmpeq_epi8(b_1, cmpmask_newline);
-        lexbuf newline_2 = _mm256_cmpeq_epi8(b_2, cmpmask_newline);
+        __m256i nidents_mask1_1 = _mm256_and_si256(idents_mask_1, idents_startmask1_1);
+        __m256i nidents_mask2_1 = _mm256_and_si256(idents_mask_shed_1, idents_startmask2_1);
+        __m256i nidents_mask1_2 = _mm256_and_si256(idents_mask_2, idents_startmask1_2);
+        __m256i nidents_mask2_2 = _mm256_and_si256(idents_mask_shed_2, idents_startmask2_2);
+        __m256i newline_1 = _mm256_cmpeq_epi8(b_1, cmpmask_newline);
+        __m256i newline_2 = _mm256_cmpeq_epi8(b_2, cmpmask_newline);
 
         u32 toks_mmask_1 = (u32) _mm256_movemask_epi8(toks_mask_1);
         u32 toks_mmask_2 = (u32) _mm256_movemask_epi8(toks_mask_2);
@@ -272,11 +270,11 @@ lex(lex_state* state)
 #if PRINT_LINES
         {
             printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
+            for (int i = 0; i < 64; ++i)
                 printf("%d", i % 10);
             printf("|\n");
             printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
+            for (int i = 0; i < 64; ++i)
             {
                 if (p[i] == '\n') printf(" ");
                 else if (!p[i]) printf(" ");
@@ -284,7 +282,7 @@ lex(lex_state* state)
             }
             printf("|\n");
             printf("|");
-            for (int i = 0; i < 2 * nlex; ++i)
+            for (int i = 0; i < 64; ++i)
             {
                 if (common_mmask & ((u64)1 << i)) printf("*");
                 else printf(" ");
@@ -339,7 +337,7 @@ lex(lex_state* state)
                 char* strstart = x++;
 
                 // TODO: Don't increment index in the loop, calculate adv from the start?
-                for (;; x += sizeof(lexbuf))
+                for (;; x += sizeof(__m256i))
                 {
                     if (UNLIKELY(x >= string_end))
                     {
@@ -350,9 +348,9 @@ lex(lex_state* state)
                         goto finalize;
                     }
 
-                    lexbuf nb = _mm256_loadu_si256((lexbuf*) x);
-                    lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
-                    lexbuf nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
+                    __m256i nb = _mm256_loadu_si256((__m256i*) x);
+                    __m256i nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
+                    __m256i nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
                     u32 nl_mm = _mm256_movemask_epi8(nl_n);
 
@@ -514,7 +512,7 @@ repeat_doublequote_seek:
 skip_long:
                         printf("  long comment\n");
                         p = x + 1;
-                        for (;; p += sizeof(lexbuf))
+                        for (;; p += sizeof(__m256i))
                         {
                             if (UNLIKELY(p >= string_end))
                             {
@@ -526,11 +524,11 @@ skip_long:
 #if PRINT_LINES
                             {
                                 printf("|");
-                                for (int i = 0; i < nlex; ++i)
+                                for (int i = 0; i < 32; ++i)
                                     printf("%d", i % 10);
                                 printf("|\n");
                                 printf("|");
-                                for (int i = 0; i < nlex; ++i)
+                                for (int i = 0; i < 32; ++i)
                                 {
                                     if (p[i] == '\n') printf(" ");
                                     else if (!p[i]) printf(" ");
@@ -541,8 +539,8 @@ skip_long:
                             }
 #endif
 
-                            lexbuf cb = _mm256_loadu_si256((lexbuf*) p);
-                            lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
+                            __m256i cb = _mm256_loadu_si256((__m256i*) p);
+                            __m256i cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
                             if (cb_mm)
                             {
@@ -564,7 +562,7 @@ skip_long:
                         p = x + 2;
                         curr_inline_idx += idx + 2;
                         printf("  (long)\n");
-                        for (;; p += sizeof(lexbuf))
+                        for (;; p += sizeof(__m256i))
                         {
                             if (UNLIKELY(p >= string_end))
                             {
@@ -573,13 +571,13 @@ skip_long:
                                 goto finalize;
                             }
 
-                            lexbuf comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
+                            __m256i comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
                             // TODO: This is very misleading, cb_2 is _before_ cb_1 !!
-                            lexbuf cb_1 = _mm256_loadu_si256((void*) p);
-                            lexbuf cb_2 = _mm256_loadu_si256((void*) (p + 1));
-                            lexbuf cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
-                            lexbuf cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
-                            lexbuf cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
+                            __m256i cb_1 = _mm256_loadu_si256((void*) p);
+                            __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
+                            __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
+                            __m256i cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
+                            __m256i cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
                             u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
                             u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
                             u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
@@ -590,11 +588,11 @@ skip_long:
 #if PRINT_LINES
                             {
                                 printf("|");
-                                for (int i = 0; i < nlex; ++i)
+                                for (int i = 0; i < 32; ++i)
                                     printf("%d", i % 10);
                                 printf("|\n");
                                 printf("|");
-                                for (int i = 0; i < nlex; ++i)
+                                for (int i = 0; i < 32; ++i)
                                 {
                                     if (p[i] == '\n') printf(" ");
                                     else if (!p[i]) printf(" ");
@@ -712,8 +710,8 @@ skip_long:
             }
         }
 
-        p += 2 * nlex;
-        curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
+        p += 64;
+        curr_inline_idx += 64; /* TODO: __m256i size */
 continue_outer:
         (void) 0;
     }
@@ -748,7 +746,7 @@ main(int argc, char** argv)
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* string = (char*) calloc(fsize /* + nlex ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+    char* string = (char*) malloc(fsize);
     fread(string, 1, fsize, f);
 #else
     int fd = open(fname, O_RDONLY);
