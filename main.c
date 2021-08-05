@@ -1,15 +1,26 @@
+#define USE_MMAP 0
+
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
+#ifdef _MSC_VER
+#  define _CRT_SECURE_NO_DEPRECATE
+#endif
 #include <stdio.h>
 #include <string.h>
+
+#ifdef _MSC_VER
+#  include <intrin.h>
+#endif
 
 #include <pmmintrin.h>
 #include <immintrin.h>
 
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#if USE_MMAP
+#  include <fcntl.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#endif
 
 #include "util.h"
 
@@ -22,6 +33,57 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #else
 #  define NOOPTIMIZE(EXPR) ((void) 0)
 #  define PRINT_LINES 1
+#endif
+
+#if (defined(__GNUC__)) || (defined(__clang__))
+#  define ctz32(V) (__builtin_ctz((uint32_t)(V)))
+#  define ctz64(V) (__builtin_ctzll((uint64_t)(V)))
+#  define clz32(V) (__builtin_clz((uint32_t)(V)))
+#  define clz64(V) (__builtin_clzll((uint64_t)(V)))
+#  define popcnt(V) (__builtin_popcount(V))
+#  define popcnt64(V) (__builtin_popcountll(V))
+#elif (defined(_MSC_VER))
+// TODO: 64 version is not available if compiling for 32 bits. Provide something.
+#  include <intrin.h>
+#  pragma intrinsic(_BitScanForward)
+#  pragma intrinsic(_BitScanForward64)
+#  pragma intrinsic(_BitScanReverse)
+#  pragma intrinsic(_BitScanReverse64)
+#  define ctz32(V) (intr_msvc_ctz32((uint32_t) V))
+#  define ctz64(V) (intr_msvc_ctz64((uint64_t) V))
+#  define clz32(V) (31 - intr_msvc_clz32((uint32_t) V))
+#  define clz64(V) (63 - intr_msvc_clz64((uint64_t) V))
+#  define popcnt64(V) (__popcnt64((uint64_t) V))
+#  define popcnt(V) (__popcnt((uint32_t) V))
+
+__forceinline static int32_t
+intr_msvc_ctz32(uint32_t mask)
+{
+    unsigned long index = 0;
+    _BitScanForward(&index, mask);
+    return (int32_t) index;
+}
+__forceinline static int32_t
+intr_msvc_ctz64(uint64_t mask)
+{
+    unsigned long index = 0;
+    _BitScanForward64(&index, mask);
+    return (int32_t) index;
+}
+__forceinline static int32_t
+intr_msvc_clz32(uint32_t mask)
+{
+    unsigned long index = 0;
+    _BitScanReverse(&index, mask);
+    return (int32_t) index;
+}
+__forceinline static int32_t
+intr_msvc_clz64(uint64_t mask)
+{
+    unsigned long index = 0;
+    _BitScanReverse64(&index, mask);
+    return (int32_t) index;
+}
 #endif
 
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
@@ -134,7 +196,7 @@ lex(lex_state* state)
         lexbuf toks_mask_1 = _mm256_andnot_si256(idents_mask_1, charmask_1);
         lexbuf toks_mask_2 = _mm256_andnot_si256(idents_mask_2, charmask_2);
 
-        lexbuf ident_start = _mm256_set1_epi16(0xFF00);
+        lexbuf ident_start = _mm256_set1_epi16((u16) 0xFF00);
         lexbuf idents_startmask1_1 = _mm256_cmpeq_epi16(idents_mask_1, ident_start);
         lexbuf idents_startmask2_1 = _mm256_cmpeq_epi16(idents_mask_shed_1, ident_start);
         lexbuf idents_startmask1_2 = _mm256_cmpeq_epi16(idents_mask_2, ident_start);
@@ -186,7 +248,7 @@ lex(lex_state* state)
             s = (s & (s - 1));
 
             u64 mask = idents_fullmask_rev & (~1);
-            i32 wsidx = mask ? __builtin_ctzll(mask) : 64;
+            i32 wsidx = mask ? ctz64(mask) : 64;
             NOOPTIMIZE(wsidx); /* TODO */
 
             printf("Token ignored L += %d\n", wsidx);
@@ -227,7 +289,7 @@ lex(lex_state* state)
 
         while (s)
         {
-            i32 idx = __builtin_ctzll(s);
+            i32 idx = ctz64(s);
             char* x = p + idx;
             s = (s & (s - 1));
 
@@ -253,7 +315,7 @@ lex(lex_state* state)
                 if (LIKELY(idx < 63))
                 {
                     u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1)); // TODO: Overflow shift?
-                    wsidx = mask ? __builtin_ctzll(mask) : 64;
+                    wsidx = mask ? ctz64(mask) : 64;
                 }
                 NOOPTIMIZE(wsidx); /* TODO */
 
@@ -282,7 +344,7 @@ lex(lex_state* state)
                         goto finalize;
                     }
 
-                    lexbuf nb = _mm256_loadu_si256((void *) x);
+                    lexbuf nb = _mm256_loadu_si256((lexbuf*) x);
                     lexbuf nb_n = _mm256_cmpeq_epi8(nb, cmpmask_doublequote);
                     lexbuf nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
@@ -294,10 +356,10 @@ lex(lex_state* state)
                     // the doublequote and make sure it is backslashed
                     if (UNLIKELY(nl_mm))
                     {
-                        i32 end_idx = nb_mm ? __builtin_ctz(nb_mm) : 32;
+                        i32 end_idx = nb_mm ? ctz32(nb_mm) : 32;
                         while (nl_mm)
                         {
-                            i32 nl_idx = __builtin_ctz(nl_mm);
+                            i32 nl_idx = ctz32(nl_mm);
                             if (nl_idx > end_idx)
                                 break;
 
@@ -332,7 +394,7 @@ lex(lex_state* state)
 repeat_doublequote_seek:
                     if (nb_mm)
                     {
-                        i32 end_idx = __builtin_ctz(nb_mm);
+                        i32 end_idx = ctz32(nb_mm);
                         if (UNLIKELY(x[end_idx - 1] == '\\'))
                         {
                             // TODO: Could be extracted to a function
@@ -428,7 +490,7 @@ repeat_doublequote_seek:
                         if (m) // Short skip, newline in the same buf
                         {
                             printf("  short comment\n");
-                            i32 comment_end_idx = __builtin_ctzll(m);
+                            i32 comment_end_idx = ctz64(m);
                             if (UNLIKELY(p[comment_end_idx - 1] == '\\')) // TODO: Use vectors instead of looking up?
                             {
                                 // TODO: This is the place, where warning about
@@ -473,12 +535,12 @@ skip_long:
                             }
 #endif
 
-                            lexbuf cb = _mm256_loadu_si256((void*) p);
+                            lexbuf cb = _mm256_loadu_si256((lexbuf*) p);
                             lexbuf cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
                             if (cb_mm)
                             {
-                                p += __builtin_ctzll(cb_mm);
+                                p += ctz64(cb_mm);
                                 break;
                             }
                         }
@@ -519,7 +581,6 @@ skip_long:
                             // TODO: NEXT: Test both cases
                             u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010;
                             u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
-
 #if PRINT_LINES
                             {
                                 printf("|");
@@ -541,17 +602,16 @@ skip_long:
                             u32 cb_mm = m1 | (m2 << 1);
                             if (cb_mm)
                             {
-                                i32 tz = __builtin_ctz(cb_mm);
+                                i32 tz = ctz32(cb_mm);
                                 printf("tz = %d %d\n", tz, ((((u32)1 << tz) & (m2 << 1)) != 0));
-
                                 i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
                                 u32 adv_pow = (u32)1 << tz;
                                 cb_nl_mm &= adv_pow | (adv_pow - 1);
                                 if (cb_nl_mm)
                                 {
-                                    i32 nladv = 32 - __builtin_clz(cb_nl_mm);
+                                    i32 nladv = 32 - clz32(cb_nl_mm);
                                     ASSERT(nladv < adv);
-                                    curr_line += __builtin_popcount(cb_nl_mm);
+                                    curr_line += popcnt(cb_nl_mm);
                                     curr_inline_idx = 1 + (adv - nladv);
                                 }
                                 else
@@ -565,8 +625,8 @@ skip_long:
 
                             if (cb_nl_mm)
                             {
-                                curr_line += __builtin_popcount(cb_nl_mm);
-                                curr_inline_idx = __builtin_clz(cb_nl_mm) + 1;
+                                curr_line += popcnt(cb_nl_mm);
+                                curr_inline_idx = clz32(cb_nl_mm) + 1;
                             }
                             else
                             {
@@ -649,6 +709,7 @@ skip_long:
         p += 2 * nlex;
         curr_inline_idx += 2 * nlex; /* TODO: lexbuf size */
 continue_outer:
+        (void) 0;
     }
 
 finalize:
@@ -670,7 +731,7 @@ main(int argc, char** argv)
     char* fname = argv[1];
     g_fname = fname; // TODO: Temporary
 
-#if 0
+#if !(USE_MMAP)
     FILE* f = fopen(fname, "rb");
     if (UNLIKELY(!f))
     {
@@ -681,7 +742,7 @@ main(int argc, char** argv)
     fseek(f, 0, SEEK_END);
     isize fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* string = calloc(fsize /* + nlex ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
+    char* string = (char*) calloc(fsize /* + nlex ROUND UP TO SSE BUF SIZE, TODO */, sizeof(char));
     fread(string, 1, fsize, f);
 #else
     int fd = open(fname, O_RDONLY);
