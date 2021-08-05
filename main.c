@@ -1,31 +1,31 @@
 // TODO: \-NL is broken on windows, because the newlines there are \-CR-NL
+// TODO: 64 and 32 are hardcoded everywhere
 
-extern char const* __asan_default_options(void);
+extern char const* __asan_default_options(void); /* TODO: remove */
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
+/* TODO: These go to the library */
+#include <string.h> /* memset, memcpy */
+#include "util.h" /* TODO: Include only useful parts! */
+
+#ifdef _MSC_VER
+#  include <intrin.h>
+#endif
+#include <immintrin.h>
+
+/* TODO: These go to example file! */
 #define USE_MMAP 0
 
 #ifdef _MSC_VER
 #  define _CRT_SECURE_NO_DEPRECATE
 #endif
 #include <stdio.h>
-#include <string.h>
 
-#ifdef _MSC_VER
-#  include <intrin.h>
-#endif
-
-/* TODO: These go to the library */
-#include <immintrin.h>
-
-/* TODO: These go to example file! */
 #if USE_MMAP
 #  include <fcntl.h>
 #  include <sys/mman.h>
 #  include <sys/stat.h>
 #endif
-
-#include "util.h"
 
 #ifdef RELEASE
 #  undef ASSERT
@@ -169,7 +169,7 @@ lex(lex_state* state)
     /* __m256i cmpmask_dollar = _mm256_set1_epi8('$'); */
     __m256i cmpmask_newline = _mm256_set1_epi8('\n');
     __m256i cmpmask_doublequote = _mm256_set1_epi8('\"');
-    __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); // space - 1, TODO: For sure?
+    __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); /* space - 1 */
     ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
@@ -246,10 +246,11 @@ lex(lex_state* state)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
+        /* If previous frame finished with an ident and this one starts with
+         * one, it's a continuation of an old ident */
         if (carry == CARRY_IDENT && (idents_mmask & 1))
         {
-            // Ignore the token, b/c this is just the continuation
-            s = (s & (s - 1));
+            s = (s & (s - 1)); /* Ignore first token */
 
             u64 mask = idents_fullmask_rev & (~1);
             i32 wsidx = mask ? ctz64(mask) : 64;
@@ -258,12 +259,8 @@ lex(lex_state* state)
             printf("Token ignored L += %d\n", wsidx);
         }
 
-        // Could be also set after the loop, it makes no difference and we will
-        // probably get better caching here?
-
-        // NOTE, TODO: Based on some real code: CARRY_IDENT happens ~58% and
-        // CARRY_NONE ~26% which leaves CARRY_OP with ~16%. TODO: Optimize to
-        // get advantage of this! TODO: Below can be done branchless!
+        /* Based on some real code, CARRY_IDENT happens ~78% cases */
+        /* TODO: This can be branchless */
         if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
         else carry = CARRY_NONE;
 
@@ -711,7 +708,7 @@ skip_long:
         }
 
         p += 64;
-        curr_inline_idx += 64; /* TODO: __m256i size */
+        curr_inline_idx += 64;
 continue_outer:
         (void) 0;
     }
