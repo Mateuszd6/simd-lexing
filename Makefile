@@ -5,13 +5,13 @@ all:
 	    -fsanitize=address,undefined -fstrict-aliasing                         \
 	    main.c -o main
 
-	# # COVERAGE
+	# COVERAGE
 	# gcc -g3 -fno-omit-frame-pointer -O0 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function              \
 	    # -march=native                                                            \
 	    # -fstrict-aliasing                                                        \
 	    # main.c -o main
 
-	# # RELEASE
+	# RELEASE
 	# gcc -O3 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function              \
 	    # -march=native                                                            \
 	    # -fstrict-aliasing                                                        \

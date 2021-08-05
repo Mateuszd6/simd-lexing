@@ -1,8 +1,3 @@
-// TODO: Test both comments and a string at the end of a file (second parse)
-// TODO: Bugs when last \ is in one lex window and " is in the next one (we won't look for " if we see \)
-// TODO: Generally, strigs near the end is broken
-// TODO: Gcc seem to support things like \000
-
 extern char const* __asan_default_options(void);
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
