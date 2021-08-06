@@ -1,5 +1,7 @@
 // TODO: \-NL is broken on windows, because the newlines there are \-CR-NL
 // TODO: 64 and 32 are hardcoded everywhere
+// TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
+// TODO: Treat characters with first bit set as valid parts of identfier (utf8)
 
 extern char const* __asan_default_options(void); /* TODO: remove */
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
@@ -19,8 +21,6 @@ typedef int64_t i64;
 typedef uint64_t u64;
 typedef size_t usize;
 typedef ptrdiff_t isize;
-typedef i8 b8;
-typedef i32 b32;
 
 #ifdef _MSC_VER
 #  include <intrin.h>
@@ -30,6 +30,9 @@ typedef i32 b32;
 /* TODO: use user-defined assert? */
 #include <assert.h>
 #define ASSERT assert
+
+/* TODO: */
+/* #define LEX_ON_TOKEN(TOKEN_TYPE, VALUE) */
 
 /* TODO: Remove this, because in the library code, there should be no printfs */
 #include <stdio.h> /* printf, fprintf */
@@ -220,7 +223,7 @@ struct token
 };
 
 static i32
-lex(lex_state* state)
+lex_s(lex_state* state)
 {
     char const* p = state->string;
     char const* string_end = state->string_end;
@@ -793,19 +796,12 @@ err_bad_char_literal:
 err_newline_in_string:
     error = ERR_NEWLINE_IN_STRING;
     goto finalize;
-
-/* err_nomem: */
-/* err_bad_character: */
-/* err_unexpected_comment_end: */
-/* err_eof_at_comment: */
-/* err_eof_at_string: */
-/* err_eof_at_char: */
 }
 
 lex_result
 real_lex(char const* string, isize len)
 {
-    ASSERT(len > 64); /* TODO: !!!! */
+    i32 err = OK;
     lex_state state;
     state.string = string;
     state.string_end = string + len - 64; /* TODO: Don't hardcode 64 */
@@ -813,13 +809,23 @@ real_lex(char const* string, isize len)
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
 
-    i32 err = lex(&state);
-    if (UNLIKELY(err != OK))
-        goto finalize;
+    if (LIKELY(len > 64))
+    {
+        err = lex_s(&state);
+        if (UNLIKELY(err != OK))
+            goto finalize;
+    }
+    else
+    {
+        // Fixup state, because len turned out to be too small
+        state.string_end = string + len;
+        state.out_at = string;
+        state.out_in = IN_NONE;
+    }
 
     char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
-    char string_tail[64 + 64]; // TODO: Don't hardcode!
+    char string_tail[64 + 64]; /* TODO: Don't hardcode! */
     memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
 
@@ -845,8 +851,8 @@ real_lex(char const* string, isize len)
 
             if (UNLIKELY(state.string >= state.string_end))
             {
-                fprintf(stderr, "Unterminated string comment at EOF!\n");
-                exit(1);
+                err = ERR_EOF_AT_STRING;
+                goto finalize;
             }
 
             state.curr_inline_idx++;
@@ -854,13 +860,13 @@ real_lex(char const* string, isize len)
         } break;
         case IN_SHORT_COMMENT:
         {
-            // TODO: Check for buggy -1 when newline is at the beginning of the buffer
+            /* TODO: Check for buggy -1 when newline is at the beginning of the buffer */
             while (state.string < state.string_end && (*state.string != '\n' || *(state.string - 1) == '\\'))
                 state.string++;
             if (UNLIKELY(state.string >= state.string_end))
             {
-                fprintf(stderr, "Unterminated short comment at EOF!\n");
-                exit(1);
+                err = ERR_EOF_AT_COMMENT;
+                goto finalize;
             }
 
             state.curr_line++;
@@ -883,8 +889,8 @@ real_lex(char const* string, isize len)
 
             if (UNLIKELY(state.string >= state.string_end - 1))
             {
-                fprintf(stderr, "Unterminated long comment at EOF!\n");
-                exit(1);
+                err = ERR_EOF_AT_COMMENT;
+                goto finalize;
             }
 
             state.curr_inline_idx += 2;
@@ -911,25 +917,25 @@ real_lex(char const* string, isize len)
     }
 #endif
 
-    err = lex(&state);
+    err = lex_s(&state);
     p = state.out_at;
     if (UNLIKELY(state.out_in != IN_NONE))
     {
         switch (state.out_in) {
         case IN_STRING:
         {
-            fprintf(stderr, "Unterminated string at the end of a file\n");
-            exit(1);
+            err = ERR_EOF_AT_STRING;
+            goto finalize;
         } break;
         case IN_SHORT_COMMENT:
         {
-            fprintf(stderr, "Unterminated short comment at the end of a file\n");
-            exit(1);
+            err = ERR_EOF_AT_COMMENT;
+            goto finalize;
         } break;
         case IN_LONG_COMMENT:
         {
-            fprintf(stderr, "Unterminated long comment at the end of a file\n");
-            exit(1);
+            err = ERR_EOF_AT_COMMENT;
+            goto finalize;
         } break;
         default: NOTREACHED;
         }
@@ -1013,9 +1019,5 @@ main(int argc, char** argv)
         exit(1);
     }
 
-#if 0
-    fclose(f);
-#else
-#endif
     return 0;
 }

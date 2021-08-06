@@ -1,1 +1,1 @@
-Unterminated string at the end of a file
+./tests/unterminated-string-near-end-2.c:25:19: error: Unexpected EOF in string
