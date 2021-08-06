@@ -138,6 +138,7 @@ mm_ext_shl8_si256(__m256i a)
     return _mm256_alignr_epi8(a, mask, 16-1);
 }
 
+/* TODO: Macro define this? */
 static inline u32
 u32_loadu(void* p)
 {
@@ -379,6 +380,7 @@ lex(lex_state* state)
                         state->in = IN_STRING;
                         p = x;
                         curr_inline_idx += x - strstart - 1;
+                        carry = CARRY_NONE;
                         goto finalize;
                     }
 
@@ -560,6 +562,7 @@ skip_long:
                             {
                                 printf("Cannot parse further, breaking and saving state!\n");
                                 state->in = IN_SHORT_COMMENT;
+                                carry = CARRY_NONE;
                                 goto finalize;
                             }
 
@@ -610,6 +613,7 @@ skip_long:
                             {
                                 printf("Cannot parse further, breaking and saving state!\n");
                                 state->in = IN_LONG_COMMENT;
+                                carry = CARRY_NONE;
                                 goto finalize;
                             }
 

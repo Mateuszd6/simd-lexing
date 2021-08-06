@@ -1,6 +1,6 @@
 SQLITE_PRIVATE int sqlite3StmtVtabInit(sqlite3 *db){
   int rc = SQLITE_OK;
-  rc = sqlite3_create_module(db, "sqlite_stmt", &stmtModule, 0);
+  rc = sqlite3_create_module(db, "sqlite_stmt"qweqejiqwejie, 0);
   return rc;
 }
 
@@ -20,4 +20,5 @@ SQLITE_API int sqlite3_stmt_init(
 /* Return the source-id for this library */
 // SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_API const char *sqlite3_sourceid(void){
 return_SQLITE_API
-const char *sqlite3_sourceid(void){ return_SQLITE_API const char " sqqqqte3_sourceid(void){ return qoiej qweoijqweo jqw eoiqj weoiqj eoiqjw         "SQLITE_SOURCE_ID; } "hello char
+const char *sqlite3_sourceid(void){ return_SQLITE_API const char " sqqqqte3_sourceid(void){ return qoiej qweoijqweo jqw eoiqj weoiqj eoiqjw         "SQLITE_SOURCE_ID; } "hello char\
+\
