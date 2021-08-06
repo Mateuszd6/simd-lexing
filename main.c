@@ -209,7 +209,6 @@ struct token
     i32 line;
     i32 idx;
     i32 len;
-    /* TODO: some place for flags here, b/c padding? */
 };
 
 static i32
@@ -324,7 +323,7 @@ lex(lex_state* state)
             printf("Token ignored L += %d\n", wsidx);
         }
 
-        /* Based on some real code, CARRY_IDENT happens ~78% cases */
+        /* Based on some real code, CARRY_IDENT happens in ~78% cases */
         /* TODO: This can be branchless */
         if (fixup_mmask & ((u64)1 << 63)) carry = CARRY_IDENT;
         else carry = CARRY_NONE;
@@ -372,9 +371,9 @@ lex(lex_state* state)
 
             if (idents_mmask & ((u64)1 << idx)) // TODO: digit
             {
-                ASSERT(('a' <= x[0] && x[0] <= 'z')
+                ASSERT(x[0] == '_'
+                       || ('a' <= x[0] && x[0] <= 'z')
                        || ('A' <= x[0] && x[0] <= 'Z')
-                       || x[0] == '_'
                        || ('0' <= x[0] && x[0] <= '9'));
 
                 i32 wsidx = 64; /* TODO: no branch? */
@@ -534,11 +533,8 @@ repeat_doublequote_seek:
             }
             else
             {
-                /* This may give false positives */
                 // TODO: 0b is gnu extension
-                // TODO: Is this even correct? what about -> ?
-                // TODO: Narrow that criteria
-                if (size_ge_2 /* && (x[0] == x[1] || x[1] == '=' || (x[1] & 0b11111011) == ':') */)
+                if (size_ge_2)
                 {
                     u32 w = u32_loadu(x);
                     u32 w2 = w & 0xFFFF;
@@ -795,6 +791,12 @@ err_newline_in_string:
 /* err_eof_at_comment: */
 /* err_eof_at_string: */
 /* err_eof_at_char: */
+}
+
+i32
+real_lex()
+{
+
 }
 
 /* */
