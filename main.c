@@ -642,9 +642,7 @@ skip_long:
                             u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
                             u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
                             u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
-
-                            // TODO: NEXT: Test both cases
-                            u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010;
+                            u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010; /* TODO: Don't use gnu's 0b */
                             u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
 #if PRINT_LINES
                             {
@@ -778,8 +776,6 @@ continue_outer:
 
 finalize:
     // Update state:
-    // state->string;
-    // state->string_end;
     state->curr_line = curr_line;
     state->curr_inline_idx = curr_inline_idx;
     state->carry = carry;
