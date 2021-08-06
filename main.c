@@ -144,6 +144,18 @@ enum lex_error
     ERR_EOF_AT_CHAR, /* EOF without ending a '' char literal */
 };
 
+char const* lex_error_str[] = {
+    [OK] = "OK",
+    [ERR_NOMEM] = "Out of memory",
+    [ERR_BAD_CHARACTER] = "Unexpected character in file",
+    [ERR_BAD_CHAR_LITERAL] = "Invalid character literal",
+    [ERR_UNEXPECTED_COMMENT_END] = "Unexpected comment end",
+    [ERR_NEWLINE_IN_STRING] = "Unescaped newline in string",
+    [ERR_EOF_AT_COMMENT] = "Unexpected EOF in comment",
+    [ERR_EOF_AT_STRING] = "Unexpected EOF in string",
+    [ERR_EOF_AT_CHAR] = "Unexpected EOF in character literal", /* TODO: Test that, is it even possible? */
+};
+
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
@@ -208,6 +220,7 @@ lex(lex_state* state)
     i32 curr_inline_idx = state->curr_inline_idx;
     i32 carry = state->carry;
     i32 in = IN_NONE;
+    i32 error = OK;
 
     __m256i cmpmask_0 = _mm256_set1_epi8('0' - 1);
     __m256i cmpmask_9 = _mm256_set1_epi8('9' + 1);
@@ -417,7 +430,7 @@ lex(lex_state* state)
                                 break;
 
                             nl_mm = (nl_mm & (nl_mm - 1));
-                            if (x[nl_idx - 1] == '\\')
+                            if (LIKELY(x[nl_idx - 1] == '\\')) /* TODO: CR-NL! */
                             {
                                 // TODO: Copypaste Could be extracted to a function
                                 char* b = &x[nl_idx - 2];
@@ -425,22 +438,18 @@ lex(lex_state* state)
                                 while (*b-- == '\\')
                                     bslashes++;
 
+                                /* Odd number of backslashes, doublequote is cancelled out */
                                 if (bslashes & 1)
                                 {
-                                    printf("There are %d backslashes, so doublequote is cancelled-out\n", bslashes);
                                     strstart = x + nl_idx;
                                     curr_line++;
                                     curr_inline_idx = 1;
                                     continue;
                                 }
-                                else
-                                {
-                                    printf("There are %d backslashes, this is a valid doublequote\n", bslashes);
-                                }
                             }
 
-                            fprintf(stderr, "Unescaped newline in the middle of the string\n");
-                            exit(1);
+                            fprintf(stderr, "Here!\n");
+                            goto err_newline_in_string;
                         }
                     }
 
@@ -495,31 +504,22 @@ repeat_doublequote_seek:
                             || UNLIKELY(x[4] > '9')
                             || UNLIKELY(x[5] != '\''))
                         {
-                            fprintf(stderr, "%s:%d:%d: bad character sequence\n",
-                                    g_fname, curr_line, curr_inline_idx + idx);
-                            exit(1); /* TODO: Report error */
+                            curr_inline_idx += idx;
+                            goto err_bad_char_literal;
                         }
                     }
                 }
                 else if (UNLIKELY(x[2] != '\''))
                 {
-                    fprintf(stderr, "%s:%d:%d: bad character sequence\n",
-                            g_fname, curr_line, curr_inline_idx + idx);
-                    exit(1); /* TODO: Report error */
-                }
-
-                u64 skip_mask = (1 << (skip_idx + 1)) - 2;
-                if (UNLIKELY(skip_idx == 2 && x[2] != '\''))
-                {
-                    printf("BAD: \"%.*s\"\n", 8, x);
-                    NOTREACHED;
+                    curr_inline_idx += idx;
+                    goto err_bad_char_literal;
                 }
 
                 printf("%s:%d:%d: TOK SINGLE CHAR: \"%.*s\"\n",
                        g_fname, curr_line, curr_inline_idx + idx,
                        x[1] != '\\' ? 1 : 2, x + 1);
 
-                // TODO: NOTREACHED if bad sequence
+                u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 NOOPTIMIZE(skip_mask);
                 n_parsed_chars++;
                 if (idx + skip_idx >= 64)
@@ -778,7 +778,23 @@ finalize:
     state->out_in = in;
     state->out_at = p;
 
-    return OK;
+    return error;
+
+
+err_bad_char_literal:
+    error = ERR_BAD_CHAR_LITERAL;
+    goto finalize;
+
+err_newline_in_string:
+    error = ERR_NEWLINE_IN_STRING;
+    goto finalize;
+
+/* err_nomem: */
+/* err_bad_character: */
+/* err_unexpected_comment_end: */
+/* err_eof_at_comment: */
+/* err_eof_at_string: */
+/* err_eof_at_char: */
 }
 
 /* */
@@ -845,7 +861,12 @@ main(int argc, char** argv)
     state.carry = CARRY_NONE;
 
     i32 err = lex(&state);
-    (void) err; /* TODO: Return an error */
+    if (UNLIKELY(err != OK))
+    {
+        fprintf(stderr, "%s: ERROR: %s\n", argv[0], lex_error_str[err]);
+        exit(1);
+    }
+
     char* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
     char string_tail[64 + 64]; // TODO: Don't hardcode!
