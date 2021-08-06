@@ -42,7 +42,7 @@ typedef i32 b32;
 #  define UNLIKELY(EXPR) (EXPR)
 #endif
 
-// TODO: MSVC version of notreached
+// TODO: MSVC version of notreached __assume(0)
 #if (defined(__GNUC__) || defined(__clang__))
 #  define NOTREACHED __builtin_unreachable()
 #else
@@ -131,6 +131,19 @@ enum lex_in
     IN_STRING = 3,
 };
 
+enum lex_error
+{
+    OK, /* OK */
+    ERR_NOMEM, /* Out of memory */
+    ERR_BAD_CHARACTER, /* Char that should not appear in a file */
+    ERR_BAD_CHAR_LITERAL, /* Char literal other than 'x', '\x' or '\xxx' */
+    ERR_UNEXPECTED_COMMENT_END, /* Encoutered * / while not being in comment */
+    ERR_NEWLINE_IN_STRING, /* NL char without backslash in string */
+    ERR_EOF_AT_COMMENT, /* EOF without ending a comment */
+    ERR_EOF_AT_STRING, /* EOF without ending a string */
+    ERR_EOF_AT_CHAR, /* EOF without ending a '' char literal */
+};
+
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
@@ -148,7 +161,7 @@ u32_loadu(void* p)
     return retval;
 }
 
-// TODO: Get rid of them?
+// TODO: Get rid of them!
 #if 1
 static i64 n_parsed_idents = 0;
 static i64 n_parsed_numbers = 0;
@@ -164,11 +177,11 @@ struct lex_state
 {
     char* string;
     char* string_end;
-    i64 curr_line; /* TODO: make them 32-bit */
-    i64 curr_inline_idx;
+    i32 curr_line; /* TODO: make them 32-bit */
+    i32 curr_inline_idx;
     i32 carry;
-    i32 in; /* TODO: Rename to out_in so that's clear it's an out param */
-    /* TODO: Create out_error */
+    i32 out_in;
+    char* out_at;
 };
 
 typedef struct token token;
@@ -186,14 +199,15 @@ struct token
 
 };
 
-static char*
+static i32
 lex(lex_state* state)
 {
     char* p = state->string;
     char* string_end = state->string_end;
-    i64 curr_line = state->curr_line;
-    i64 curr_inline_idx = state->curr_inline_idx;
+    i32 curr_line = state->curr_line;
+    i32 curr_inline_idx = state->curr_inline_idx;
     i32 carry = state->carry;
+    i32 in = IN_NONE;
 
     __m256i cmpmask_0 = _mm256_set1_epi8('0' - 1);
     __m256i cmpmask_9 = _mm256_set1_epi8('9' + 1);
@@ -208,7 +222,6 @@ lex(lex_state* state)
     __m256i cmpmask_newline = _mm256_set1_epi8('\n');
     __m256i cmpmask_doublequote = _mm256_set1_epi8('\"');
     __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); /* space - 1 */
-    ASSERT(state->in == IN_NONE); // TODO: No need to check, this is just an out param?
 
     while (p < string_end)
     {
@@ -358,7 +371,7 @@ lex(lex_state* state)
                 }
                 NOOPTIMIZE(wsidx); /* TODO */
 
-                printf("%s:%ld:%ld: TOK (L = %d): \"",
+                printf("%s:%d:%d: TOK (L = %d): \"",
                        g_fname, curr_line, curr_inline_idx + idx, wsidx - idx);
                 printf("%.*s", wsidx - idx, x);
                 printf("\"\n");
@@ -367,7 +380,7 @@ lex(lex_state* state)
             }
             else if (x[0] == '"') // TODO: probably move down? Does it matter?
             {
-                printf("%s:%ld:%ld: TOK: STRING START\n", g_fname, curr_line, curr_inline_idx + idx);
+                printf("%s:%d:%d: TOK: STRING START\n", g_fname, curr_line, curr_inline_idx + idx);
                 curr_inline_idx += idx + 1; // TODO: try to avoid here?
                 char* strstart = x++;
 
@@ -377,7 +390,7 @@ lex(lex_state* state)
                     if (UNLIKELY(x >= string_end))
                     {
                         printf("Cannot parse further, breaking and saving state!\n");
-                        state->in = IN_STRING;
+                        in = IN_STRING;
                         p = x;
                         curr_inline_idx += x - strstart - 1;
                         carry = CARRY_NONE;
@@ -482,7 +495,7 @@ repeat_doublequote_seek:
                             || UNLIKELY(x[4] > '9')
                             || UNLIKELY(x[5] != '\''))
                         {
-                            fprintf(stderr, "%s:%ld:%ld: bad character sequence\n",
+                            fprintf(stderr, "%s:%d:%d: bad character sequence\n",
                                     g_fname, curr_line, curr_inline_idx + idx);
                             exit(1); /* TODO: Report error */
                         }
@@ -490,7 +503,7 @@ repeat_doublequote_seek:
                 }
                 else if (UNLIKELY(x[2] != '\''))
                 {
-                    fprintf(stderr, "%s:%ld:%ld: bad character sequence\n",
+                    fprintf(stderr, "%s:%d:%d: bad character sequence\n",
                             g_fname, curr_line, curr_inline_idx + idx);
                     exit(1); /* TODO: Report error */
                 }
@@ -502,7 +515,7 @@ repeat_doublequote_seek:
                     NOTREACHED;
                 }
 
-                printf("%s:%ld:%ld: TOK SINGLE CHAR: \"%.*s\"\n",
+                printf("%s:%d:%d: TOK SINGLE CHAR: \"%.*s\"\n",
                        g_fname, curr_line, curr_inline_idx + idx,
                        x[1] != '\\' ? 1 : 2, x + 1);
 
@@ -539,14 +552,8 @@ repeat_doublequote_seek:
                         {
                             printf("  short comment\n");
                             i32 comment_end_idx = ctz64(m);
-                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) // TODO: Use vectors instead of looking up?
-                            {
-                                // TODO: This is the place, where warning about
-                                // multi-lne-single-line comment can be emmited.
-                                printf("We actually have a backslashed string, "
-                                       "so don't bother with a fast skip\n");
+                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) /* TODO: CR-NL! */
                                 goto skip_long;
-                            }
 
                             s &= ~(((u64)1 << comment_end_idx) - 1);
                             n_single_comments++;
@@ -561,7 +568,7 @@ skip_long:
                             if (UNLIKELY(p >= string_end))
                             {
                                 printf("Cannot parse further, breaking and saving state!\n");
-                                state->in = IN_SHORT_COMMENT;
+                                in = IN_SHORT_COMMENT;
                                 carry = CARRY_NONE;
                                 goto finalize;
                             }
@@ -603,7 +610,7 @@ skip_long:
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
-                        printf("%s:%ld:%ld: /* comment", g_fname, curr_line, curr_inline_idx + idx);
+                        printf("%s:%d:%d: /* comment", g_fname, curr_line, curr_inline_idx + idx);
                         p = x + 2;
                         curr_inline_idx += idx + 2;
                         printf("  (long)\n");
@@ -612,7 +619,7 @@ skip_long:
                             if (UNLIKELY(p >= string_end))
                             {
                                 printf("Cannot parse further, breaking and saving state!\n");
-                                state->in = IN_LONG_COMMENT;
+                                in = IN_LONG_COMMENT;
                                 carry = CARRY_NONE;
                                 goto finalize;
                             }
@@ -691,13 +698,12 @@ skip_long:
                         goto continue_outer;
                     }
                     else if (    w3 == TOK3('>', '>', '=')
-                                 || (w3 == TOK3('<', '<', '='))
-                                 || (w3 == TOK3('.', '.', '.')))
+                             || (w3 == TOK3('<', '<', '='))
+                             || (w3 == TOK3('.', '.', '.')))
                     {
-                        printf("%s:%ld:%ld: TOK3: \"%.*s\"\n",
+                        printf("%s:%d:%d: TOK3: \"%.*s\"\n",
                                g_fname, curr_line, curr_inline_idx + idx, 3, x);
 
-                        // TODO: move outer for common code?
                         u64 skip_idx = 2;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
@@ -731,12 +737,12 @@ skip_long:
                              || (w2 == TOK2('|', '='))
                              || (w2 == TOK2('?', ':')))
                     {
-                        // TODO: This should match */, because if we find this token
-                        // here it means we should end parsing with a lexing error
-                        printf("%s:%ld:%ld: TOK2: \"%.*s\"\n",
+                        /* TODO: This should match * /, because if we find this
+                           token here it means we should end parsing with a
+                           lexing error */
+                        printf("%s:%d:%d: TOK2: \"%.*s\"\n",
                                g_fname, curr_line, curr_inline_idx + idx, 2, x);
 
-                        // TODO: move outer for common code?
                         u64 skip_idx = 1;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
@@ -752,7 +758,7 @@ skip_long:
                 }
 
                 NOOPTIMIZE(x[0]);
-                printf("%s:%ld:%ld: TOK: \"%c\"\n", g_fname, curr_line, curr_inline_idx + idx, x[0]); /* TODO: idx + 1 > 32 */
+                printf("%s:%d:%d: TOK: \"%c\"\n", g_fname, curr_line, curr_inline_idx + idx, x[0]);
             }
         }
 
@@ -766,18 +772,19 @@ finalize:
     // Update state:
     // state->string;
     // state->string_end;
-    // TODO: set additional state in comment/in string etc
     state->curr_line = curr_line;
     state->curr_inline_idx = curr_inline_idx;
     state->carry = carry;
+    state->out_in = in;
+    state->out_at = p;
 
-    return p;
+    return OK;
 }
 
 /* */
 /* TODO: These go to example file! */
 /* */
-#define USE_MMAP 0
+#define USE_MMAP 1
 
 #ifdef _MSC_VER
 #  define _CRT_SECURE_NO_DEPRECATE
@@ -836,19 +843,20 @@ main(int argc, char** argv)
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
-    state.in = IN_NONE; // TODO: No need to set, this is just an out param?
 
-    char* p = lex(&state);
-    int offset = p - state.string_end;
+    i32 err = lex(&state);
+    (void) err; /* TODO: Return an error */
+    char* p = state.out_at;
+    i32 offset = (i32) (p - state.string_end);
     char string_tail[64 + 64]; // TODO: Don't hardcode!
     memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
 
     state.string = string_tail;
     state.string_end = string_tail + 64 - offset;
-    if (UNLIKELY(state.in != IN_NONE))
+    if (UNLIKELY(state.out_in != IN_NONE))
     {
-        switch (state.in) {
+        switch (state.out_in) {
         case IN_STRING:
         {
             while (state.string < state.string_end && *state.string != '"') // TODO: Check backqotes correctly!
@@ -914,7 +922,7 @@ main(int argc, char** argv)
         default: NOTREACHED;
         }
     }
-    state.in = IN_NONE; // TODO: No need to set, this is just an out param?;
+    state.out_in = IN_NONE; // TODO: No need to set, this is just an out param?;
 
 #if PRINT_LINES
     printf("----------------------------------------------------------------\n");
@@ -933,10 +941,11 @@ main(int argc, char** argv)
     }
 #endif
 
-    p = lex(&state);
-    if (UNLIKELY(state.in != IN_NONE))
+    err = lex(&state);
+    p = state.out_at;
+    if (UNLIKELY(state.out_in != IN_NONE))
     {
-        switch (state.in) {
+        switch (state.out_in) {
         case IN_STRING:
         {
             fprintf(stderr, "Unterminated string at the end of a file\n");
@@ -957,7 +966,7 @@ main(int argc, char** argv)
     }
 
     fprintf(stdout, "Parsed: "
-            "%ld lines, %ld ids, %ld strings, "
+            "%d lines, %ld ids, %ld strings, "
             "%ld chars, %ld ints, %ld hex,   %ld floats,    "
             "%ld //s, %ld /**/s,   0 #foo\n",
             state.curr_line, n_parsed_idents, n_parsed_strings,

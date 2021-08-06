@@ -2,15 +2,15 @@
 
 all:
 	# DEBUG
-	gcc -O0 -g3 -DDEBUG=1 -Wall -Wextra -Wshadow -Wno-unused-function          \
-	    -march=native                                                          \
-	    -fsanitize=address,undefined -fstrict-aliasing                         \
+	gcc -O0 -g3 -DDEBUG=1 -Wall -Wextra -Wshadow -Wno-unused-function            \
+	    -march=native                                                            \
+	    -fsanitize=address,undefined -fstrict-aliasing                           \
 	    main.c -o main
 
 	# COVERAGE
-	# gcc -g3 -fno-omit-frame-pointer -O0 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function              \
+	# gcc -g3 -O0 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function          \
 	    # -march=native                                                            \
-	    # -fstrict-aliasing                                                        \
+	    # -fno-omit-frame-pointer -fstrict-aliasing                                \
 	    # main.c -o main
 
 	# RELEASE
