@@ -6,27 +6,50 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 
 /* TODO: These go to the library */
 #include <string.h> /* memset, memcpy */
-#include "util.h" /* TODO: Include only useful parts! */
+#include <stddef.h> /* size_t, ptrdiff_t */
+#include <stdint.h> /* (u)int(8,16,32,64) */
+
+typedef int8_t i8;
+typedef uint8_t u8;
+typedef int16_t i16;
+typedef uint16_t u16;
+typedef int32_t i32;
+typedef uint32_t u32;
+typedef int64_t i64;
+typedef uint64_t u64;
+typedef size_t usize;
+typedef ptrdiff_t isize;
+typedef i8 b8;
+typedef i32 b32;
 
 #ifdef _MSC_VER
 #  include <intrin.h>
 #endif
 #include <immintrin.h>
 
-/* TODO: These go to example file! */
-#define USE_MMAP 0
+/* TODO: use user-defined assert? */
+#include <assert.h>
+#define ASSERT assert
 
-#ifdef _MSC_VER
-#  define _CRT_SECURE_NO_DEPRECATE
+/* TODO: Remove this, because in the library code, there should be no printfs */
+#include <stdio.h> /* printf, fprintf */
+
+#if (defined(__GNUC__) || defined(__clang__))
+#  define LIKELY(EXPR) __builtin_expect((EXPR), 1)
+#  define UNLIKELY(EXPR) __builtin_expect((EXPR), 0)
+#else
+#  define LIKELY(EXPR) (EXPR)
+#  define UNLIKELY(EXPR) (EXPR)
 #endif
-#include <stdio.h>
 
-#if USE_MMAP
-#  include <fcntl.h>
-#  include <sys/mman.h>
-#  include <sys/stat.h>
+// TODO: MSVC version of notreached
+#if (defined(__GNUC__) || defined(__clang__))
+#  define NOTREACHED __builtin_unreachable()
+#else
+#  define NOTREACHED ((void) 0)
 #endif
 
+/* TODO: Remove these! */
 #ifdef RELEASE
 #  undef ASSERT
 #  define ASSERT(...)
@@ -50,8 +73,6 @@ extern char const* __asan_default_options() { return "detect_leaks=0"; }
 #  define popcnt(V) (__builtin_popcount(V))
 #  define popcnt64(V) (__builtin_popcountll(V))
 #elif (defined(_MSC_VER))
-// TODO: 64 version is not available if compiling for 32 bits. Provide something.
-#  include <intrin.h>
 #  pragma intrinsic(_BitScanForward)
 #  pragma intrinsic(_BitScanForward64)
 #  pragma intrinsic(_BitScanReverse)
@@ -142,10 +163,26 @@ struct lex_state
 {
     char* string;
     char* string_end;
-    i64 curr_line;
+    i64 curr_line; /* TODO: make them 32-bit */
     i64 curr_inline_idx;
     i32 carry;
-    i32 in;
+    i32 in; /* TODO: Rename to out_in so that's clear it's an out param */
+    /* TODO: Create out_error */
+};
+
+typedef struct token token;
+struct token
+{
+    i64 line; /* TODO: make them 32-bit */
+    i64 idx;
+    i32 len;
+    union
+    {
+        char str[16];
+        u64 d[2];
+        char* ptr;
+    } u;
+
 };
 
 static char*
@@ -433,6 +470,7 @@ repeat_doublequote_seek:
                     else
                     {
                         /* Support three-num character literals ('\001') */
+                        /* TODO: Make sure this value is less than 128!! */
                         skip_idx = 5;
                         if (UNLIKELY(x[2] < '0')
                             || UNLIKELY(x[3] < '0')
@@ -442,10 +480,17 @@ repeat_doublequote_seek:
                             || UNLIKELY(x[4] > '9')
                             || UNLIKELY(x[5] != '\''))
                         {
-                            printf("BAD_: %c %c %c _ \"%.*s\"\n", x[2], x[3], x[4], 8, x);
-                            NOTREACHED;
+                            fprintf(stderr, "%s:%ld:%ld: bad character sequence\n",
+                                    g_fname, curr_line, curr_inline_idx + idx);
+                            exit(1); /* TODO: Report error */
                         }
                     }
+                }
+                else if (UNLIKELY(x[2] != '\''))
+                {
+                    fprintf(stderr, "%s:%ld:%ld: bad character sequence\n",
+                            g_fname, curr_line, curr_inline_idx + idx);
+                    exit(1); /* TODO: Report error */
                 }
 
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
@@ -725,10 +770,31 @@ finalize:
     return p;
 }
 
+/* */
+/* TODO: These go to example file! */
+/* */
+#define USE_MMAP 0
+
+#ifdef _MSC_VER
+#  define _CRT_SECURE_NO_DEPRECATE
+#endif
+#include <stdio.h>
+
+#if USE_MMAP
+#  include <fcntl.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#endif
+
 int
 main(int argc, char** argv)
 {
-    if (argc < 2) fatal("Need a file");
+    if (argc < 2)
+    {
+        fprintf(stderr, "%s: fatal: Need a file", argv[0]);
+        exit(1);
+    }
+
     char* fname = argv[1];
     g_fname = fname; // TODO: Temporary
 
@@ -736,7 +802,7 @@ main(int argc, char** argv)
     FILE* f = fopen(fname, "rb");
     if (UNLIKELY(!f))
     {
-        fprintf(stderr, "%s: Could not open file '%s' for reading\n", argv[0], fname);
+        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
         exit(1);
     }
 
@@ -749,7 +815,7 @@ main(int argc, char** argv)
     int fd = open(fname, O_RDONLY);
     if (UNLIKELY(fd == -1))
     {
-        fprintf(stderr, "%s: Could not open file '%s' for reading\n", argv[0], fname);
+        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
         exit(1);
     }
 

@@ -29,13 +29,13 @@ typedef i32 b32;
 #else
 #  define LIKELY(EXPR) (EXPR)
 #  define UNLIKELY(EXPR) (EXPR)
-#endif // (defined(__GNUC__) || defined(__clang__))
+#endif
 
 // TODO: MSVC version of notreached
 #if (defined(__GNUC__) || defined(__clang__))
 #  define NOTREACHED __builtin_unreachable()
 #else
-#  define NOTREACHED ((void)0)
+#  define NOTREACHED ((void) 0)
 #endif
 
 // TODO: MSVC version of noinline
@@ -63,51 +63,5 @@ typedef i32 b32;
 #endif
 
 #define ARRAY_COUNT(ARR) sizeof(ARR) / sizeof((ARR)[0])
-
-PRINTF_FORMAT_FUNC(4, 5) NOINLINE static void
-cwarn(char const* fname, int row, int col, char const* fmt, ...)
-{
-    va_list args;
-
-    fflush(stdout);
-    fprintf(stderr, "%s:%d:%d: warning: ", fname, row, col);
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-    fprintf(stderr, "\n");
-}
-
-PRINTF_FORMAT_FUNC(4, 5) NORETURN NOINLINE static void
-cerror(char const* fname, int row, int col, char const* fmt, ...)
-{
-    va_list args;
-
-    fflush(stdout);
-    fprintf(stderr, "%s:%d:%d: error: ", fname, row, col);
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-    fprintf(stderr, "\n");
-
-    exit(1);
-}
-
-PRINTF_FORMAT_FUNC(1, 2) NORETURN NOINLINE static void
-fatal(char* fmt, ...)
-{
-    va_list args;
-
-    fflush(stdout);
-    fprintf(stderr, "fatal: ");
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-    fprintf(stderr, "\n");
-
-    exit(2);
-}
-
-// TODO: Proper debug/release assert
-#define ASSERT assert
 
 #endif // UTIL_H_

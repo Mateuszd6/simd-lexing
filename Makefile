@@ -1,3 +1,5 @@
+.PHONY: all validate snapshot clear
+
 all:
 	# DEBUG
 	gcc -O0 -g3 -DDEBUG=1 -Wall -Wextra -Wshadow -Wno-unused-function          \
