@@ -602,6 +602,8 @@ skip_long:
                             __m256i cb = _mm256_loadu_si256((__m256i*) p);
                             __m256i cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
+
+                            /* TODO: NEXT: Fix // \NL comments! */
                             if (cb_mm)
                             {
                                 p += ctz64(cb_mm);
@@ -804,7 +806,6 @@ real_lex(char const* string, isize len)
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
-
     if (LIKELY(len > 64))
     {
         err = lex_s(&state);
