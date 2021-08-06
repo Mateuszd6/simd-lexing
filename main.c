@@ -189,7 +189,7 @@ struct lex_state
 {
     char* string;
     char* string_end;
-    i32 curr_line; /* TODO: make them 32-bit */
+    i32 curr_line;
     i32 curr_inline_idx;
     i32 carry;
     i32 out_in;
@@ -199,9 +199,6 @@ struct lex_state
 typedef struct token token;
 struct token
 {
-    i64 line; /* TODO: make them 32-bit */
-    i64 idx;
-    i32 len;
     union
     {
         char str[16];
@@ -209,6 +206,10 @@ struct token
         char* ptr;
     } u;
 
+    i32 line;
+    i32 idx;
+    i32 len;
+    /* TODO: some place for flags here, b/c padding? */
 };
 
 static i32
@@ -448,7 +449,6 @@ lex(lex_state* state)
                                 }
                             }
 
-                            fprintf(stderr, "Here!\n");
                             goto err_newline_in_string;
                         }
                     }
@@ -863,7 +863,7 @@ main(int argc, char** argv)
     i32 err = lex(&state);
     if (UNLIKELY(err != OK))
     {
-        fprintf(stderr, "%s: ERROR: %s\n", argv[0], lex_error_str[err]);
+        fprintf(stderr, "%s:%d:%d: error: %s\n", g_fname, state.curr_line, state.curr_inline_idx, lex_error_str[err]);
         exit(1);
     }
 

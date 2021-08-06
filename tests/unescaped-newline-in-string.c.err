@@ -1,2 +1,1 @@
-Here!
-./main: ERROR: Unescaped newline in string
+./tests/unescaped-newline-in-string.c:12:24: error: Unescaped newline in string
