@@ -165,7 +165,7 @@ mm_ext_shl8_si256(__m256i a)
 
 /* TODO: Macro define this? */
 static inline u32
-u32_loadu(void* p)
+u32_loadu(void const* p)
 {
     u32 retval;
     memcpy(&retval, p, sizeof retval);
@@ -187,13 +187,21 @@ static char* g_fname = 0;
 typedef struct lex_state lex_state;
 struct lex_state
 {
-    char* string;
-    char* string_end;
+    char const* string;
+    char const* string_end;
     i32 curr_line;
     i32 curr_inline_idx;
     i32 carry;
     i32 out_in;
-    char* out_at;
+    char const* out_at;
+};
+
+typedef struct lex_result lex_result;
+struct lex_result
+{
+    i32 err;
+    i32 curr_line;
+    i32 curr_inline_idx;
 };
 
 typedef struct token token;
@@ -214,8 +222,8 @@ struct token
 static i32
 lex(lex_state* state)
 {
-    char* p = state->string;
-    char* string_end = state->string_end;
+    char const* p = state->string;
+    char const* string_end = state->string_end;
     i32 curr_line = state->curr_line;
     i32 curr_inline_idx = state->curr_inline_idx;
     i32 carry = state->carry;
@@ -355,13 +363,14 @@ lex(lex_state* state)
         while (s)
         {
             i32 idx = ctz64(s);
-            char* x = p + idx;
+            char const* x = p + idx;
             s = (s & (s - 1));
 
-            // TODO: Make sure that the next is also a character, not any match?
-            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1))); /* TODO: Overflow shift? */
+            /* Shift by idx + 1 is actually well defined, because if idx is 63,
+               it means that s is 0 and we won't check the second condition */
+            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
 
-            if (newline_mmask & ((u64)1 << idx)) // TODO: Unlikely? Perhaps not so much?
+            if (newline_mmask & ((u64)1 << idx))
             {
                 curr_line++;
                 curr_inline_idx = -idx;
@@ -395,7 +404,7 @@ lex(lex_state* state)
             {
                 printf("%s:%d:%d: TOK: STRING START\n", g_fname, curr_line, curr_inline_idx + idx);
                 curr_inline_idx += idx + 1; // TODO: try to avoid here?
-                char* strstart = x++;
+                char const* strstart = x++;
 
                 // TODO: Don't increment index in the loop, calculate adv from the start?
                 for (;; x += sizeof(__m256i))
@@ -433,7 +442,7 @@ lex(lex_state* state)
                             if (LIKELY(x[nl_idx - 1] == '\\')) /* TODO: CR-NL! */
                             {
                                 // TODO: Copypaste Could be extracted to a function
-                                char* b = &x[nl_idx - 2];
+                                char const* b = &x[nl_idx - 2];
                                 int bslashes = 1;
                                 while (*b-- == '\\')
                                     bslashes++;
@@ -459,7 +468,7 @@ repeat_doublequote_seek:
                         if (UNLIKELY(x[end_idx - 1] == '\\'))
                         {
                             // TODO: Could be extracted to a function
-                            char* b = &x[end_idx - 2];
+                            char const* b = &x[end_idx - 2];
                             int bslashes = 1;
                             while (*b-- == '\\')
                                 bslashes++;
@@ -793,83 +802,22 @@ err_newline_in_string:
 /* err_eof_at_char: */
 }
 
-i32
-real_lex()
+lex_result
+real_lex(char const* string, isize len)
 {
-
-}
-
-/* */
-/* TODO: These go to example file! */
-/* */
-#define USE_MMAP 1
-
-#ifdef _MSC_VER
-#  define _CRT_SECURE_NO_DEPRECATE
-#endif
-#include <stdio.h>
-
-#if USE_MMAP
-#  include <fcntl.h>
-#  include <sys/mman.h>
-#  include <sys/stat.h>
-#endif
-
-int
-main(int argc, char** argv)
-{
-    if (argc < 2)
-    {
-        fprintf(stderr, "%s: fatal: Need a file", argv[0]);
-        exit(1);
-    }
-
-    char* fname = argv[1];
-    g_fname = fname; // TODO: Temporary
-
-#if !(USE_MMAP)
-    FILE* f = fopen(fname, "rb");
-    if (UNLIKELY(!f))
-    {
-        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
-        exit(1);
-    }
-
-    fseek(f, 0, SEEK_END);
-    isize fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* string = (char*) malloc(fsize);
-    fread(string, 1, fsize, f);
-#else
-    int fd = open(fname, O_RDONLY);
-    if (UNLIKELY(fd == -1))
-    {
-        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
-        exit(1);
-    }
-
-    struct stat st;
-    fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
-    isize fsize = st.st_size;
-    char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
-#endif
-
-    ASSERT(fsize > 64); // TODO: !!!!
+    ASSERT(len > 64); /* TODO: !!!! */
     lex_state state;
     state.string = string;
-    state.string_end = string + fsize - 64; // TODO: Don't hardcode 64
+    state.string_end = string + len - 64; /* TODO: Don't hardcode 64 */
     state.curr_line = 1;
     state.curr_inline_idx = 1;
     state.carry = CARRY_NONE;
 
     i32 err = lex(&state);
     if (UNLIKELY(err != OK))
-    {
-        fprintf(stderr, "%s:%d:%d: error: %s\n", g_fname, state.curr_line, state.curr_inline_idx, lex_error_str[err]);
-        exit(1);
-    }
+        goto finalize;
 
-    char* p = state.out_at;
+    char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
     char string_tail[64 + 64]; // TODO: Don't hardcode!
     memset(string_tail, ' ', sizeof(string_tail));
@@ -882,9 +830,9 @@ main(int argc, char** argv)
         switch (state.out_in) {
         case IN_STRING:
         {
-            while (state.string < state.string_end && *state.string != '"') // TODO: Check backqotes correctly!
+            while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
             {
-                // TODO: Check for buggy -1 when newline is at the beginning of the buffer:
+                /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
                 if (UNLIKELY(*state.string == '\n' && *(state.string - 1) != '\\'))
                 {
                     state.curr_inline_idx = 0;
@@ -945,9 +893,8 @@ main(int argc, char** argv)
         default: NOTREACHED;
         }
     }
-    state.out_in = IN_NONE; // TODO: No need to set, this is just an out param?;
 
-#if PRINT_LINES
+#if 0 && PRINT_LINES
     printf("----------------------------------------------------------------\n");
     {
         printf("|");
@@ -995,6 +942,76 @@ main(int argc, char** argv)
             state.curr_line, n_parsed_idents, n_parsed_strings,
             n_parsed_chars, n_parsed_numbers, 0L, 0L,
             n_single_comments, n_long_comments);
+finalize:
+    lex_result retval;
+    retval.err = err;
+    retval.curr_line = state.curr_line;
+    retval.curr_inline_idx = state.curr_inline_idx;
+
+    return retval;
+}
+
+/* */
+/* TODO: These go to example file! */
+/* */
+#define USE_MMAP 1
+
+#ifdef _MSC_VER
+#  define _CRT_SECURE_NO_DEPRECATE
+#endif
+#include <stdio.h>
+
+#if USE_MMAP
+#  include <fcntl.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#endif
+
+int
+main(int argc, char** argv)
+{
+    if (argc < 2)
+    {
+        fprintf(stderr, "%s: fatal: Need a file", argv[0]);
+        exit(1);
+    }
+
+    char* fname = argv[1];
+    g_fname = fname; // TODO: Temporary
+
+#if !(USE_MMAP)
+    FILE* f = fopen(fname, "rb");
+    if (UNLIKELY(!f))
+    {
+        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
+        exit(1);
+    }
+
+    fseek(f, 0, SEEK_END);
+    isize fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* string = (char*) malloc(fsize);
+    fread(string, 1, fsize, f);
+#else
+    int fd = open(fname, O_RDONLY);
+    if (UNLIKELY(fd == -1))
+    {
+        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
+        exit(1);
+    }
+
+    struct stat st;
+    fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
+    isize fsize = st.st_size;
+    char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
+#endif
+
+    lex_result r = real_lex(string, fsize);
+    if (r.err != OK)
+    {
+        fprintf(stderr, "%s:%d:%d: error: %s\n", fname, r.curr_line, r.curr_inline_idx, lex_error_str[r.err]);
+        exit(1);
+    }
 
 #if 0
     fclose(f);
