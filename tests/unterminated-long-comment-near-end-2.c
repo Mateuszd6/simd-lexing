@@ -1,23 +1,23 @@
-SQLITE_PRIVATE int sqlite3StmtVtabInit(sqlite3 *db){
-  int rc = SQLITE_OK;
-  rc = sqlite3_create_module(db, "sqlite_stmt", &stmtModule, 0);
-  return rc;
+HELLO_FUNCTION int random_function_foo(foobar_t xx){
+  int xx = RESULT_OK;
+  xx = random_function_fobar(db, "random_strg", &stmtModule, 0);
+  return xx;
 }
 
 __declspec(dllexport)
-SQLITE_API int sqlite3_stmt_init(
-  sqlite3 *db,
-  char **pzErrMsg,
-  const sqlite3_api_routines *pApi
+HELLO__API int random_function_b(
+  foobar_t xx,
+  foo **foo_bars,
+  const random_random_stuffs *scoo
 ){
-  int rc = SQLITE_OK;
-  SQLITE_EXTENSION_INIT2(pApi);
-  rc = sqlite3StmtVtabInit(db);
-  return rc;
+  int xx = RESULT_OK;
+  random_function_foobar(scoo);
+  xx = random_function_foo(db);
+  return xx;
 }
 
-/************** End of stmt.c ************************************************/
-/* Return the source-id for this library */
-// SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_API const char *sqlite3_sourceid(void){
-return_SQLITE_API
-const char *sqlite3_sourceid(void){ return_SQLITE_API const char /* sqqqqte3_sourceid(void){ return qoiej qweoijqweo jqw eoiqj weoiqj*/ eoiqjw          /* SQLITE_SOURCE_ID; } hello char
+/*****************************************************************************/
+/* what am i even doing here itpointless */
+// HELLO__API const char *random_function_(void){ return HELLO__API const char *random_function_(void){ return HELLO__API const char *random_function_(void){
+return_HELLO__API
+const char *random_function_(void){ return_HELLO__API const char /* trolololololololo(void){ return qoiej qweoijqweo jqw eoiqj weoiqj*/ eoiqjw          /* RANDOM_EXTENSION; } hello char

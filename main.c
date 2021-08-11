@@ -603,10 +603,21 @@ skip_long:
                             __m256i cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
                             u32 cb_mm = _mm256_movemask_epi8(cb_n);
 
-                            /* TODO: NEXT: Fix // \NL comments! */
+repeat_nl_seek:
+                            /* At least with gcc, backslash in multi-line
+                             * single-line-comments cannot be escaped */
                             if (cb_mm)
                             {
-                                p += ctz64(cb_mm);
+                                i32 end_idx = ctz32(cb_mm);
+                                if (UNLIKELY(p[end_idx - 1] == '\\'))
+                                {
+                                    curr_line++;
+                                    curr_inline_idx = 1; /* TODO: Probably not necesarry */
+                                    cb_mm = (cb_mm & (cb_mm - 1));
+                                    goto repeat_nl_seek;
+                                }
+
+                                p += end_idx;
                                 break;
                             }
                         }
@@ -812,12 +823,16 @@ real_lex(char const* string, isize len)
         if (UNLIKELY(err != OK))
             goto finalize;
     }
-    else
+    else if (len > 0)
     {
         // Fixup state, because len turned out to be too small
         state.string_end = string + len;
         state.out_at = string;
         state.out_in = IN_NONE;
+    }
+    else
+    {
+        goto finalize;
     }
 
     char const* p = state.out_at;
