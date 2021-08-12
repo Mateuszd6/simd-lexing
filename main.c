@@ -2,6 +2,7 @@
 // TODO: 64 and 32 are hardcoded everywhere
 // TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
 // TODO: Treat characters with first bit set as valid parts of identfier (utf8)
+// TODO: Lexing floats properly
 
 extern char const* __asan_default_options(void); /* TODO: remove */
 extern char const* __asan_default_options() { return "detect_leaks=0"; }
@@ -32,7 +33,7 @@ typedef ptrdiff_t isize;
 #define ASSERT assert
 
 /* TODO: */
-/* #define LEX_ON_TOKEN(TOKEN_TYPE, VALUE) */
+/* #define SMLEX_ON_TOKEN(TOKEN_TYPE, VALUE) */
 
 /* TODO: Remove this, because in the library code, there should be no printfs */
 #include <stdio.h> /* printf, fprintf */
@@ -58,7 +59,7 @@ typedef ptrdiff_t isize;
 #  define ASSERT(...)
 #  define printf(...) ((void) 0)
 #  if (defined(__GNUC__)) || (defined(__clang__))
-#    define NOOPTIMIZE(EXPR) asm volatile (""::"g"(&EXPR):"memory")
+#    define NOOPTIMIZE(EXPR) __asm__ volatile (""::"g"(&EXPR):"memory")
 #  else
 #    define NOOPTIMIZE(EXPR) (void) (EXPR)
 #  endif
@@ -147,6 +148,17 @@ enum lex_error
     ERR_EOF_AT_CHAR, /* EOF without ending a '' char literal */
 };
 
+enum lex_type
+{
+    T_IDENT,
+    T_OP,
+    T_INTEGER,
+    T_FLOAT,
+    T_CHAR,
+    T_DOUBLEQ_STR,
+    T_BACKTICK_STR,
+};
+
 char const* lex_error_str[] = {
     [OK] = "OK",
     [ERR_NOMEM] = "Out of memory",
@@ -195,6 +207,7 @@ struct lex_state
     i32 curr_line;
     i32 curr_inline_idx;
     i32 carry;
+    i32 carry_tok_len; /* TODO: Rename + describe */
     i32 out_in;
     char const* out_at;
 };
@@ -223,13 +236,14 @@ struct token
 };
 
 static i32
-lex_s(lex_state* state)
+lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void* user)
 {
     char const* p = state->string;
     char const* string_end = state->string_end;
     i32 curr_line = state->curr_line;
     i32 curr_inline_idx = state->curr_inline_idx;
     i32 carry = state->carry;
+    i32 carry_tok_len = state->carry_tok_len;
     i32 in = IN_NONE;
     i32 error = OK;
 
@@ -304,7 +318,7 @@ lex_s(lex_state* state)
         // second part, we and with bit-flipped 1 or 0.
         u32 fixup_mmask_1 = _mm256_movemask_epi8(idents_mask_1);
         u32 fixup_mmask_2 = _mm256_movemask_epi8(idents_mask_2);
-        idents_mmask_2 &= ~((u32) ((fixup_mmask_1 & (((u32) 1) << 31)) != 0));
+        idents_mmask_2 &= ~((u32) ((fixup_mmask_1 & (((u32) 1) << 31)) != 0 ? 1 : 0));
 
         u32 idents_fullmask_rev_1 = ~((u32) _mm256_movemask_epi8(idents_mask_1));
         u32 idents_fullmask_rev_2 = ~((u32) _mm256_movemask_epi8(idents_mask_2));
@@ -321,17 +335,35 @@ lex_s(lex_state* state)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
+        // TODO: Test with a token that spans > 2 buffers!
+
         /* If previous frame finished with an ident and this one starts with
          * one, it's a continuation of an old ident */
-        if (carry == CARRY_IDENT && (idents_mmask & 1))
+        if (carry == CARRY_IDENT)
         {
-            s = (s & (s - 1)); /* Ignore first token */
+            /* TODO: len, tok_type, line, idx must be saved from the prev stuff? */
+            if (LIKELY(idents_fullmask_rev != ((u32) 0))) /* It's a revert of ident mask, so we commpare to 0! */
+            {
+                i32 addidx = 0;
+                if (idents_mmask & 1)
+                {
+                    s = (s & (s - 1)); /* Ignore first token */
+                    u64 mask = idents_fullmask_rev & (~1);
+                    addidx = mask ? ctz64(mask) : 64; /* TODO, NOTE: To add to the original len */
+                }
 
-            u64 mask = idents_fullmask_rev & (~1);
-            i32 wsidx = mask ? ctz64(mask) : 64;
-            NOOPTIMIZE(wsidx); /* TODO */
-
-            printf("Token ignored L += %d\n", wsidx);
+                char tok_start = *(p - carry_tok_len);
+                i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
+                cb(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                   curr_line, curr_inline_idx - carry_tok_len, user);
+            }
+            else
+            {
+                /* This is a very unlikely case; we've loaded a buffer, which is
+                 * whole a continuation of current token, and is not finished */
+                s = (s & (s - 1)); /* Ignore first token */
+                carry_tok_len += 64;
+            }
         }
 
         /* Based on some real code, CARRY_IDENT happens in ~78% cases */
@@ -394,14 +426,19 @@ lex_s(lex_state* state)
                     u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1)); // TODO: Overflow shift?
                     wsidx = mask ? ctz64(mask) : 64;
                 }
-                NOOPTIMIZE(wsidx); /* TODO */
 
-                printf("%s:%d:%d: TOK (L = %d): \"",
-                       g_fname, curr_line, curr_inline_idx + idx, wsidx - idx);
-                printf("%.*s", wsidx - idx, x);
-                printf("\"\n");
-                if ('0' <= x[0] && x[0] <= '9') n_parsed_numbers++;
-                else n_parsed_idents++;
+                /* If ident spans on more than one buffer frame, will be
+                 * reported later */
+                if (s || carry == CARRY_NONE) // TODO: More like carry == CARRY_IDENT, but it's the same here
+                {
+                    i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
+                    cb(x, wsidx - idx, tok_type, curr_line, curr_inline_idx + idx, user);
+                }
+                else
+                {
+                    /* Delay reporting a token */
+                    carry_tok_len = wsidx - idx;
+                }
             }
             else if (x[0] == '"') // TODO: probably move down? Does it matter?
             {
@@ -599,21 +636,21 @@ skip_long:
                             }
 #endif
 
-                            __m256i cb = _mm256_loadu_si256((__m256i*) p);
-                            __m256i cb_n = _mm256_cmpeq_epi8(cb, cmpmask_newline);
-                            u32 cb_mm = _mm256_movemask_epi8(cb_n);
+                            __m256i cbuf = _mm256_loadu_si256((__m256i*) p);
+                            __m256i cbuf_n = _mm256_cmpeq_epi8(cbuf, cmpmask_newline);
+                            u32 cbuf_mm = _mm256_movemask_epi8(cbuf_n);
 
 repeat_nl_seek:
                             /* At least with gcc, backslash in multi-line
                              * single-line-comments cannot be escaped */
-                            if (cb_mm)
+                            if (cbuf_mm)
                             {
-                                i32 end_idx = ctz32(cb_mm);
+                                i32 end_idx = ctz32(cbuf_mm);
                                 if (UNLIKELY(p[end_idx - 1] == '\\'))
                                 {
                                     curr_line++;
                                     curr_inline_idx = 1; /* TODO: Probably not necesarry */
-                                    cb_mm = (cb_mm & (cb_mm - 1));
+                                    cbuf_mm = (cbuf_mm & (cbuf_mm - 1));
                                     goto repeat_nl_seek;
                                 }
 
@@ -792,6 +829,7 @@ finalize:
     state->curr_line = curr_line;
     state->curr_inline_idx = curr_inline_idx;
     state->carry = carry;
+    state->carry_tok_len = carry_tok_len;
     state->out_in = in;
     state->out_at = p;
 
@@ -808,7 +846,7 @@ err_newline_in_string:
 }
 
 lex_result
-real_lex(char const* string, isize len)
+lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, void*), void* user)
 {
     i32 err = OK;
     lex_state state;
@@ -819,7 +857,7 @@ real_lex(char const* string, isize len)
     state.carry = CARRY_NONE;
     if (LIKELY(len > 64))
     {
-        err = lex_s(&state);
+        err = lex_s(&state, cb, user);
         if (UNLIKELY(err != OK))
             goto finalize;
     }
@@ -835,6 +873,7 @@ real_lex(char const* string, isize len)
         goto finalize;
     }
 
+    printf("-------------------------------------------------------------------------------\n");
     char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
     char string_tail[64 + 64]; /* TODO: Don't hardcode! */
@@ -911,6 +950,26 @@ real_lex(char const* string, isize len)
         default: NOTREACHED;
         }
     }
+    else if (state.carry == CARRY_IDENT)
+    {
+        i32 more = 0;
+        while (state.string < state.string_end
+               && (   ('a' <= *state.string && *state.string <= 'z')
+                   || ('A' <= *state.string && *state.string <= 'Z')
+                   || ('0' <= *state.string && *state.string <= '9')
+                   || *state.string == '_')) /* TODO: All other character parts of an ident */
+        {
+            more++;
+            state.curr_inline_idx++;
+            state.string++;
+        }
+
+        char tok_start = *(p - state.carry_tok_len);
+        i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
+        state.carry = CARRY_NONE;
+        cb(p - state.carry_tok_len, state.carry_tok_len + more, tok_type,
+           state.curr_line, state.curr_inline_idx - state.carry_tok_len - more, user);
+    }
 
 #if 0 && PRINT_LINES
     printf("----------------------------------------------------------------\n");
@@ -929,7 +988,7 @@ real_lex(char const* string, isize len)
     }
 #endif
 
-    err = lex_s(&state);
+    err = lex_s(&state, cb, user);
     p = state.out_at;
     if (UNLIKELY(state.out_in != IN_NONE))
     {
@@ -961,12 +1020,14 @@ real_lex(char const* string, isize len)
             n_parsed_chars, n_parsed_numbers, 0L, 0L,
             n_single_comments, n_long_comments);
 finalize:
-    lex_result retval;
-    retval.err = err;
-    retval.curr_line = state.curr_line;
-    retval.curr_inline_idx = state.curr_inline_idx;
+    {
+        lex_result retval;
+        retval.err = err;
+        retval.curr_line = state.curr_line;
+        retval.curr_inline_idx = state.curr_inline_idx;
 
-    return retval;
+        return retval;
+    }
 }
 
 /* */
@@ -984,6 +1045,33 @@ finalize:
 #  include <sys/mman.h>
 #  include <sys/stat.h>
 #endif
+
+void tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
+{
+    NOOPTIMIZE(str);
+    NOOPTIMIZE(len);
+    NOOPTIMIZE(type);
+    NOOPTIMIZE(line);
+    NOOPTIMIZE(idx);
+    NOOPTIMIZE(user);
+
+    switch(type) {
+    case T_IDENT:
+        n_parsed_idents++;
+        break;
+    case T_INTEGER:
+        n_parsed_numbers++;
+        break;
+    case T_DOUBLEQ_STR:
+    case T_BACKTICK_STR:
+        n_parsed_strings++;
+        break;
+    default:
+        break;
+    }
+
+    printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", g_fname, line, idx, type, len, len, str);
+}
 
 int
 main(int argc, char** argv)
@@ -1024,7 +1112,7 @@ main(int argc, char** argv)
     char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
-    lex_result r = real_lex(string, fsize);
+    lex_result r = lex(string, fsize, tok_print, 0);
     if (r.err != OK)
     {
         fprintf(stderr, "%s:%d:%d: error: %s\n", fname, r.curr_line, r.curr_inline_idx, lex_error_str[r.err]);
