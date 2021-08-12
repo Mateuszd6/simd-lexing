@@ -8,7 +8,7 @@ all:
 	    # main.c -o main
 
 	# COVERAGE
-	gcc -g3 -O0 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function          \
+	gcc --std=c99 -pedantic -g3 -O0 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function          \
 	    -march=native                                                            \
 	    -fno-omit-frame-pointer -fstrict-aliasing                                \
 	    main.c -o main

@@ -32,11 +32,25 @@ typedef ptrdiff_t isize;
 #include <assert.h>
 #define ASSERT assert
 
-/* TODO: */
-/* #define SMLEX_ON_TOKEN(TOKEN_TYPE, VALUE) */
+/* Define ON_TOKEN_CB _before_ including this file, to a function that is called
+ * on each token. For performance reasons, the function should be a static
+ * inline and be defined in a same translation unit (that's the point, an API
+ * with a function pointer is slower, even if function is static and defined in
+ * the same file!). Callback should have a signature:
 
-/* TODO: Remove this, because in the library code, there should be no printfs */
-#include <stdio.h> /* printf, fprintf */
+ * void func(token t, i32 len, i32 type, i32 line, i32 idx, void* user)
+ * where:
+ *   t is a token union
+ *   len is a length of a string (if token is either ident, integer or string)
+ *   type is a token type enum
+ *   line and idx are line and column number
+ *   user is an arbitrary user data that gets passed in
+ */
+
+/* TODO: This should be a part of the example file, _before_ including this file */
+#define ON_TOKEN_CB tok_print
+static inline void
+tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user);
 
 #if (defined(__GNUC__) || defined(__clang__))
 #  define LIKELY(EXPR) __builtin_expect((EXPR), 1)
@@ -57,7 +71,6 @@ typedef ptrdiff_t isize;
 #ifdef RELEASE
 #  undef ASSERT
 #  define ASSERT(...)
-#  define printf(...) ((void) 0)
 #  if (defined(__GNUC__)) || (defined(__clang__))
 #    define NOOPTIMIZE(EXPR) __asm__ volatile (""::"g"(&EXPR):"memory")
 #  else
@@ -196,7 +209,6 @@ static i64 n_parsed_strings = 0;
 static i64 n_parsed_chars = 0;
 static i64 n_single_comments = 0;
 static i64 n_long_comments = 0;
-static char* g_fname = 0;
 #endif
 
 typedef struct lex_state lex_state;
@@ -220,23 +232,20 @@ struct lex_result
     i32 curr_inline_idx;
 };
 
-typedef struct token token;
-struct token
+typedef union token token;
+union token
 {
-    union
-    {
-        char str[16];
-        u64 d[2];
-        char* ptr;
-    } u;
-
-    i32 line;
-    i32 idx;
-    i32 len;
+    char* ident;
+    char* integer;
+    char* str;
+    u32 op;
+    u32 ch;
+    /* TODO: T_FLOAT */
 };
 
+__attribute__((flatten))
 static i32
-lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void* user)
+lex_s(lex_state* state, void* user)
 {
     char const* p = state->string;
     char const* string_end = state->string_end;
@@ -354,8 +363,8 @@ lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void*
 
                 char tok_start = *(p - carry_tok_len);
                 i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
-                cb(p - carry_tok_len, carry_tok_len + addidx, tok_type,
-                   curr_line, curr_inline_idx - carry_tok_len, user);
+                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                            curr_line, curr_inline_idx - carry_tok_len, user);
             }
             else
             {
@@ -432,7 +441,8 @@ lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void*
                 if (s || carry == CARRY_NONE) // TODO: More like carry == CARRY_IDENT, but it's the same here
                 {
                     i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
-                    cb(x, wsidx - idx, tok_type, curr_line, curr_inline_idx + idx, user);
+                    ON_TOKEN_CB(x, wsidx - idx, tok_type,
+                                curr_line, curr_inline_idx + idx, user);
                 }
                 else
                 {
@@ -442,8 +452,9 @@ lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void*
             }
             else if (x[0] == '"') // TODO: probably move down? Does it matter?
             {
-                printf("%s:%d:%d: TOK: STRING START\n", g_fname, curr_line, curr_inline_idx + idx);
                 curr_inline_idx += idx + 1; // TODO: try to avoid here?
+                i32 str_start_line = curr_line;
+                i32 str_start_idx = curr_inline_idx;
                 char const* strstart = x++;
 
                 // TODO: Don't increment index in the loop, calculate adv from the start?
@@ -451,7 +462,6 @@ lex_s(lex_state* state, void(*cb)(char const*, i32, i32, i32, i32, void*), void*
                 {
                     if (UNLIKELY(x >= string_end))
                     {
-                        printf("Cannot parse further, breaking and saving state!\n");
                         in = IN_STRING;
                         p = x;
                         curr_inline_idx += x - strstart - 1;
@@ -523,9 +533,10 @@ repeat_doublequote_seek:
                         }
 
                         p = x + end_idx + 1;
+                        ON_TOKEN_CB(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
+                                    str_start_line, str_start_idx, user);
                         curr_inline_idx += (x - strstart) - 1 + end_idx + 1;
                         carry = CARRY_NONE;
-                        n_parsed_strings++;
                         goto continue_outer;
                     }
                 }
@@ -563,13 +574,10 @@ repeat_doublequote_seek:
                     goto err_bad_char_literal;
                 }
 
-                printf("%s:%d:%d: TOK SINGLE CHAR: \"%.*s\"\n",
-                       g_fname, curr_line, curr_inline_idx + idx,
-                       x[1] != '\\' ? 1 : 2, x + 1);
-
+                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR,
+                            curr_line, curr_inline_idx + idx, user);
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 NOOPTIMIZE(skip_mask);
-                n_parsed_chars++;
                 if (idx + skip_idx >= 64)
                 {
                     p += idx + skip_idx + 1;
@@ -591,11 +599,9 @@ repeat_doublequote_seek:
 
                     if (w2 == TOK2('/', '/'))
                     {
-                        printf("Skip // comment\n");
                         u64 m = s & newline_mmask;
                         if (m) // Short skip, newline in the same buf
                         {
-                            printf("  short comment\n");
                             i32 comment_end_idx = ctz64(m);
                             if (UNLIKELY(p[comment_end_idx - 1] == '\\')) /* TODO: CR-NL! */
                                 goto skip_long;
@@ -606,13 +612,11 @@ repeat_doublequote_seek:
                         }
 
 skip_long:
-                        printf("  long comment\n");
                         p = x + 1;
                         for (;; p += sizeof(__m256i))
                         {
                             if (UNLIKELY(p >= string_end))
                             {
-                                printf("Cannot parse further, breaking and saving state!\n");
                                 in = IN_SHORT_COMMENT;
                                 carry = CARRY_NONE;
                                 goto finalize;
@@ -668,15 +672,12 @@ repeat_nl_seek:
                     }
                     else if (w2 == TOK2('/', '*'))
                     {
-                        printf("%s:%d:%d: /* comment", g_fname, curr_line, curr_inline_idx + idx);
                         p = x + 2;
                         curr_inline_idx += idx + 2;
-                        printf("  (long)\n");
                         for (;; p += sizeof(__m256i))
                         {
                             if (UNLIKELY(p >= string_end))
                             {
-                                printf("Cannot parse further, breaking and saving state!\n");
                                 in = IN_LONG_COMMENT;
                                 carry = CARRY_NONE;
                                 goto finalize;
@@ -692,8 +693,8 @@ repeat_nl_seek:
                             u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
                             u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
                             u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
-                            u32 m1 = cb_mm_1 & 0b10101010101010101010101010101010; /* TODO: Don't use gnu's 0b */
-                            u32 m2 = cb_mm_2 & 0b01010101010101010101010101010101;
+                            u32 m1 = cb_mm_1 & 0xAAAAAAAA; /* 10101010... */
+                            u32 m2 = cb_mm_2 & 0x55555555; /* 01010101... */
 #if PRINT_LINES
                             {
                                 printf("|");
@@ -716,7 +717,6 @@ repeat_nl_seek:
                             if (cb_mm)
                             {
                                 i32 tz = ctz32(cb_mm);
-                                printf("tz = %d %d\n", tz, ((((u32)1 << tz) & (m2 << 1)) != 0));
                                 i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
                                 u32 adv_pow = (u32)1 << tz;
                                 cb_nl_mm &= adv_pow | (adv_pow - 1);
@@ -757,8 +757,7 @@ repeat_nl_seek:
                              || (w3 == TOK3('<', '<', '='))
                              || (w3 == TOK3('.', '.', '.')))
                     {
-                        printf("%s:%d:%d: TOK3: \"%.*s\"\n",
-                               g_fname, curr_line, curr_inline_idx + idx, 3, x);
+                        ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_inline_idx + idx, user);
 
                         u64 skip_idx = 2;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -796,8 +795,7 @@ repeat_nl_seek:
                         /* TODO: This should match * /, because if we find this
                            token here it means we should end parsing with a
                            lexing error */
-                        printf("%s:%d:%d: TOK2: \"%.*s\"\n",
-                               g_fname, curr_line, curr_inline_idx + idx, 2, x);
+                        ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_inline_idx + idx, user);
 
                         u64 skip_idx = 1;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -813,8 +811,7 @@ repeat_nl_seek:
                     }
                 }
 
-                NOOPTIMIZE(x[0]);
-                printf("%s:%d:%d: TOK: \"%c\"\n", g_fname, curr_line, curr_inline_idx + idx, x[0]);
+                ON_TOKEN_CB(x, 1, T_OP, curr_line, curr_inline_idx + idx, user);
             }
         }
 
@@ -846,7 +843,7 @@ err_newline_in_string:
 }
 
 lex_result
-lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, void*), void* user)
+lex(char const* string, isize len, void* user)
 {
     i32 err = OK;
     lex_state state;
@@ -857,7 +854,7 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
     state.carry = CARRY_NONE;
     if (LIKELY(len > 64))
     {
-        err = lex_s(&state, cb, user);
+        err = lex_s(&state, user);
         if (UNLIKELY(err != OK))
             goto finalize;
     }
@@ -873,7 +870,6 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
         goto finalize;
     }
 
-    printf("-------------------------------------------------------------------------------\n");
     char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
     char string_tail[64 + 64]; /* TODO: Don't hardcode! */
@@ -887,6 +883,7 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
         switch (state.out_in) {
         case IN_STRING:
         {
+            /* TODO: Run cb() after parsing this string! */
             while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
             {
                 /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
@@ -967,11 +964,12 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
         char tok_start = *(p - state.carry_tok_len);
         i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
         state.carry = CARRY_NONE;
-        cb(p - state.carry_tok_len, state.carry_tok_len + more, tok_type,
-           state.curr_line, state.curr_inline_idx - state.carry_tok_len - more, user);
+        ON_TOKEN_CB(p - state.carry_tok_len, state.carry_tok_len + more, tok_type,
+                    state.curr_line, state.curr_inline_idx - state.carry_tok_len - more,
+                    user);
     }
 
-#if 0 && PRINT_LINES
+#if PRINT_LINES
     printf("----------------------------------------------------------------\n");
     {
         printf("|");
@@ -988,7 +986,7 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
     }
 #endif
 
-    err = lex_s(&state, cb, user);
+    err = lex_s(&state, user);
     p = state.out_at;
     if (UNLIKELY(state.out_in != IN_NONE))
     {
@@ -1012,13 +1010,6 @@ lex(char const* string, isize len, void(*cb)(char const*, i32, i32, i32, i32, vo
         }
     }
 
-    fprintf(stdout, "Parsed: "
-            "%d lines, %ld ids, %ld strings, "
-            "%ld chars, %ld ints, %ld hex,   %ld floats,    "
-            "%ld //s, %ld /**/s,   0 #foo\n",
-            state.curr_line, n_parsed_idents, n_parsed_strings,
-            n_parsed_chars, n_parsed_numbers, 0L, 0L,
-            n_single_comments, n_long_comments);
 finalize:
     {
         lex_result retval;
@@ -1046,31 +1037,50 @@ finalize:
 #  include <sys/stat.h>
 #endif
 
-void tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
+static inline void
+tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 {
+    char const* f = (char const*) user;
+    (void) f;
+
     NOOPTIMIZE(str);
     NOOPTIMIZE(len);
     NOOPTIMIZE(type);
     NOOPTIMIZE(line);
     NOOPTIMIZE(idx);
-    NOOPTIMIZE(user);
 
     switch(type) {
     case T_IDENT:
+    {
         n_parsed_idents++;
-        break;
+    } break;
     case T_INTEGER:
+    {
         n_parsed_numbers++;
-        break;
+    } break;
     case T_DOUBLEQ_STR:
     case T_BACKTICK_STR:
+    {
         n_parsed_strings++;
-        break;
+    } break;
+    case T_CHAR:
+    {
+        n_parsed_chars++;
+    } break;
+    /* case T_OP:
+       {
+       } break;
+       case T_FLOAT:
+       {
+       } break; */
     default:
-        break;
+    {
+    } break;
     }
 
-    printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", g_fname, line, idx, type, len, len, str);
+#if PRINT_LINES
+    printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
+#endif
 }
 
 int
@@ -1083,7 +1093,6 @@ main(int argc, char** argv)
     }
 
     char* fname = argv[1];
-    g_fname = fname; // TODO: Temporary
 
 #if !(USE_MMAP)
     FILE* f = fopen(fname, "rb");
@@ -1112,12 +1121,20 @@ main(int argc, char** argv)
     char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
-    lex_result r = lex(string, fsize, tok_print, 0);
+    lex_result r = lex(string, fsize, fname);
     if (r.err != OK)
     {
         fprintf(stderr, "%s:%d:%d: error: %s\n", fname, r.curr_line, r.curr_inline_idx, lex_error_str[r.err]);
         exit(1);
     }
+
+    fprintf(stdout, "Parsed: "
+            "%d lines, %ld ids, %ld strings, "
+            "%ld chars, %ld ints, %ld hex,   %ld floats,    "
+            "%ld //s, %ld /**/s,   0 #foo\n",
+            r.curr_line, n_parsed_idents, n_parsed_strings,
+            n_parsed_chars, n_parsed_numbers, 0L, 0L,
+            n_single_comments, n_long_comments);
 
     return 0;
 }
