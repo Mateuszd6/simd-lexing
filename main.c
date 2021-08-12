@@ -747,8 +747,6 @@ repeat_nl_seek:
                             }
                         }
 
-                        // curr_inline_idx += 2;
-                        // p += 2;
                         carry = CARRY_NONE;
                         n_long_comments++;
                         goto continue_outer;
