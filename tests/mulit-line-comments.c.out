@@ -1,1 +1,5 @@
-Parsed: 8 lines, 3 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+./tests/mulit-line-comments.c:7:5: TOK 0 (L = 5): "hello"
+./tests/mulit-line-comments.c:7:11: TOK 0 (L = 5): "cruel"
+./tests/mulit-line-comments.c:7:17: TOK 0 (L = 5): "world"
+./tests/mulit-line-comments.c:7:22: TOK 1 (L = 1): "!"
+Parsed: 8 lines, 3 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats,    0 //s, 1 /**/s,   0 #foo

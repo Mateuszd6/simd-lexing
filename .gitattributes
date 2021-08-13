@@ -1,0 +1,3 @@
+# Make sure github doesn't recognise .h files as C++ source files. It is pure C!
+*.h linguist-language=C
+./**/*.h linguist-language=C

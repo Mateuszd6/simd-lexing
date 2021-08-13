@@ -1,1 +1,1 @@
-./tests/backslashes-in-string-4.c:13:24: error: Unescaped newline in string
+./tests/backslashes-in-string-4.c:13:77: error: Unescaped newline in string
