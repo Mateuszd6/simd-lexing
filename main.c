@@ -28,7 +28,7 @@ typedef ptrdiff_t isize;
 #endif
 #include <immintrin.h>
 
-/* TODO: use user-defined assert? */
+/* TODO: Remove this when done */
 #include <assert.h>
 #define ASSERT assert
 
@@ -251,7 +251,18 @@ union token
     /* TODO: T_FLOAT */
 };
 
-__attribute__((flatten))
+static inline i32
+count_backslashes(char const* p)
+{
+    i32 backslashes = 0;
+    p -= (*p == '\r' ? 1 : 0); /* Handle CR-LF */
+    while (*p-- == '\\')
+        backslashes++;
+
+    return backslashes;
+}
+
+__attribute__((flatten)) /* TODO: Only for gnu */
 static i32
 lex_s(lex_state* state, void* user)
 {
@@ -504,16 +515,10 @@ lex_s(lex_state* state, void* user)
                                 break;
 
                             nl_mm = (nl_mm & (nl_mm - 1));
-                            if (LIKELY(x[nl_idx - 1] == '\\')) /* TODO: CR-NL! */
+                            if (LIKELY(x[nl_idx - 1] == '\\') || LIKELY(x[nl_idx - 2] == '\\'))
                             {
-                                // TODO: Copypaste Could be extracted to a function
-                                char const* b = &x[nl_idx - 2];
-                                int bslashes = 1;
-                                while (*b-- == '\\')
-                                    bslashes++;
-
-                                /* Odd number of backslashes, doublequote is cancelled out */
-                                if (bslashes & 1)
+                                int bslashes = count_backslashes(&x[nl_idx - 1]);
+                                if (bslashes & 1) /* Odd number of backslashes cancels out */
                                 {
                                     bufstart = x + nl_idx;
                                     curr_line++;
@@ -530,18 +535,12 @@ repeat_doublequote_seek:
                     if (nb_mm)
                     {
                         i32 end_idx = ctz32(nb_mm);
-                        if (UNLIKELY(x[end_idx - 1] == '\\'))
+                        if (UNLIKELY(x[end_idx - 1] == '\\') || UNLIKELY(x[end_idx - 2] == '\\'))
                         {
-                            // TODO: Could be extracted to a function
-                            char const* b = &x[end_idx - 2];
-                            int bslashes = 1;
-                            while (*b-- == '\\')
-                                bslashes++;
-
-                            /* There is odd number of backslashes, so
-                               doublequote is cancelled-out */
+                            int bslashes = count_backslashes(&x[end_idx - 1]);
                             if (bslashes & 1)
                             {
+                                /* Odd number of backslashes cancels out */
                                 nb_mm = (nb_mm & (nb_mm - 1));
                                 goto repeat_doublequote_seek;
                             }
@@ -613,11 +612,17 @@ repeat_doublequote_seek:
                     if (w2 == TOK2('/', '/'))
                     {
                         u64 m = s & newline_mmask;
-                        if (m) // Short skip, newline in the same buf
+                        if (m) /* Short skip, newline in the same buf */
                         {
                             i32 comment_end_idx = ctz64(m);
-                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')) /* TODO: CR-NL! */
+                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')
+                                || (UNLIKELY(p[comment_end_idx - 2] == '\\')))
+                            {
+                                /* Don't do fast skip, when we have some creepy
+                                 * backslashes next to the newline. Might give
+                                 * some false positives though. */
                                 goto skip_long;
+                            }
 
                             s &= ~(((u64)1 << comment_end_idx) - 1);
                             n_single_comments++;
@@ -663,7 +668,8 @@ repeat_nl_seek:
                             if (cbuf_mm)
                             {
                                 i32 end_idx = ctz32(cbuf_mm);
-                                if (UNLIKELY(p[end_idx - 1] == '\\'))
+                                if (UNLIKELY(p[end_idx - 1] == '\\')
+                                    || UNLIKELY(p[end_idx - 2] == '\\' && p[end_idx - 1] == '\r'))
                                 {
                                     curr_line++;
                                     curr_inline_idx = 1; /* TODO: Probably not necesarry */
@@ -886,7 +892,7 @@ lex(char const* string, isize len, void* user)
 
     char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
-    char string_tail[64 + 64]; /* TODO: Don't hardcode! */
+    char string_tail[64 + 64]; /* TODO: Don't hardcode 64! */
     memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
     state.string = string_tail;
@@ -897,8 +903,23 @@ lex(char const* string, isize len, void* user)
         switch (state.out_in) {
         case IN_STRING:
         {
-            /* TODO: Run cb() after parsing this string! */
             i32 more = 0;
+
+            /* If previous frame ended with a '\': */
+            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
+            {
+                if ((*(p - 1) == '\\' && *p == '\n')
+                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
+                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
+                {
+                    i32 add = 1 + (*p == '\r');
+                    more += add;
+                    state.string += add;
+                    state.curr_inline_idx = add;
+                    state.curr_line++;
+                }
+            }
+
             while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
             {
                 /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
@@ -928,9 +949,29 @@ lex(char const* string, isize len, void* user)
         } break;
         case IN_SHORT_COMMENT:
         {
+            /* If previous frame ended with a '\': */
+            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
+            {
+                if ((*(p - 1) == '\\' && *p == '\n')
+                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
+                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
+                {
+                    i32 add = 1 + (*p == '\r');
+                    state.string += add;
+                    state.curr_inline_idx = add;
+                    state.curr_line++;
+                }
+            }
+
             /* TODO: Check for buggy -1 when newline is at the beginning of the buffer */
             while (state.string < state.string_end && (*state.string != '\n' || *(state.string - 1) == '\\'))
+            {
+                if (UNLIKELY(*state.string == '\n'))
+                    state.curr_line++;
+
                 state.string++;
+            }
+
             if (UNLIKELY(state.string >= state.string_end))
             {
                 err = ERR_EOF_AT_COMMENT;
@@ -1062,6 +1103,11 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 {
     char const* f = (char const*) user;
     (void) f;
+    (void) str;
+    (void) len;
+    (void) type;
+    (void) line;
+    (void) idx;
 
     switch(type) {
     case T_IDENT:

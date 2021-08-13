@@ -10,7 +10,8 @@ struct foobar
 int
 main(int argc, char** argv)
 {
-    char const* foo = "And this is a very long string\
+    char const* foo =// And this is a very long string\
 which has backslashes and newlines to make sure it calculates\
 \
-ne numbers and stuff. Hello cruel world!";
+ne numbers and stuff. Hello cruel world
+foobar <= 0
