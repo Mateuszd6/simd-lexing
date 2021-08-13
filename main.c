@@ -1,4 +1,3 @@
-// TODO: \-NL is broken on windows, because the newlines there are \-CR-NL
 // TODO: 64 and 32 are hardcoded everywhere
 // TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
 // TODO: Treat characters with first bit set as valid parts of identfier (utf8)
@@ -915,7 +914,7 @@ lex(char const* string, isize len, void* user)
                     i32 add = 1 + (*p == '\r');
                     more += add;
                     state.string += add;
-                    state.curr_inline_idx = add;
+                    state.curr_inline_idx = 1;
                     state.curr_line++;
                 }
             }
@@ -923,8 +922,15 @@ lex(char const* string, isize len, void* user)
             while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
             {
                 /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
-                if (UNLIKELY(*state.string == '\n' && *(state.string - 1) != '\\'))
+                if (UNLIKELY(*state.string == '\n'))
                 {
+                    if ((*(state.string - 1) != '\\'
+                         && (*(state.string - 1) != '\r' || *(state.string - 2) != '\\')))
+                    {
+                        err = ERR_NEWLINE_IN_STRING;
+                        goto finalize;
+                    }
+
                     state.curr_inline_idx = 0;
                     state.curr_line++;
                 }
@@ -964,10 +970,16 @@ lex(char const* string, isize len, void* user)
             }
 
             /* TODO: Check for buggy -1 when newline is at the beginning of the buffer */
-            while (state.string < state.string_end && (*state.string != '\n' || *(state.string - 1) == '\\'))
+            while (state.string < state.string_end
+                   && (*state.string != '\n'
+                       || *(state.string - 1) == '\\'
+                       || (*(state.string - 1) == '\r' && *(state.string - 2) == '\\')))
             {
                 if (UNLIKELY(*state.string == '\n'))
+                {
                     state.curr_line++;
+                    state.curr_inline_idx = 1;
+                }
 
                 state.string++;
             }
