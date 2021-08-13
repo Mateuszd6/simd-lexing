@@ -13,6 +13,12 @@ all:
 	    -fno-omit-frame-pointer -fstrict-aliasing                                \
 	    main.c -o main
 
+	# PROFILE
+	# gcc -O3 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function               \
+	    # -g3 -fno-omit-frame-pointer -march=native                                 \
+	    # -fstrict-aliasing                                                         \
+	    # main.c -o main
+
 	# RELEASE
 	# gcc -O3 -DRELEASE=1 -Wall -Wextra -Wshadow -Wno-unused-function              \
 	    # -march=native                                                            \

@@ -38,9 +38,9 @@ typedef ptrdiff_t isize;
  * with a function pointer is slower, even if function is static and defined in
  * the same file!). Callback should have a signature:
 
- * void func(token t, i32 len, i32 type, i32 line, i32 idx, void* user)
+ * void func(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
  * where:
- *   t is a token union
+ *   TODO: Verify this docs
  *   len is a length of a string (if token is either ident, integer or string)
  *   type is a token type enum
  *   line and idx are line and column number
@@ -80,6 +80,11 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user);
 #else
 #  define NOOPTIMIZE(EXPR) ((void) 0)
 #  define PRINT_LINES 1
+#endif
+
+/* TODO: Remove!! */
+#if PRINT_LINES
+#  include <stdio.h>
 #endif
 
 #if (defined(__GNUC__)) || (defined(__clang__))
@@ -217,10 +222,13 @@ struct lex_state
     char const* string;
     char const* string_end;
     i32 curr_line;
-    i32 curr_inline_idx;
+    i32 curr_inline_idx; /* TODO: Rename to curr_idx */
     i32 carry;
     i32 carry_tok_len; /* TODO: Rename + describe */
     i32 out_in;
+    i32 in_string_line;
+    i32 in_string_idx;
+    i32 in_string_parsed;
     char const* out_at;
 };
 
@@ -456,6 +464,7 @@ lex_s(lex_state* state, void* user)
                 i32 str_start_line = curr_line;
                 i32 str_start_idx = curr_inline_idx;
                 char const* strstart = x++;
+                char const* bufstart = strstart;
 
                 // TODO: Don't increment index in the loop, calculate adv from the start?
                 for (;; x += sizeof(__m256i))
@@ -464,8 +473,14 @@ lex_s(lex_state* state, void* user)
                     {
                         in = IN_STRING;
                         p = x;
-                        curr_inline_idx += x - strstart - 1;
+                        curr_inline_idx += x - bufstart - 1;
                         carry = CARRY_NONE;
+
+                        /* These are only set in this specific case */
+                        state->in_string_line = str_start_line;
+                        state->in_string_idx = str_start_idx;
+                        state->in_string_parsed = p - strstart;
+
                         goto finalize;
                     }
 
@@ -500,7 +515,7 @@ lex_s(lex_state* state, void* user)
                                 /* Odd number of backslashes, doublequote is cancelled out */
                                 if (bslashes & 1)
                                 {
-                                    strstart = x + nl_idx;
+                                    bufstart = x + nl_idx;
                                     curr_line++;
                                     curr_inline_idx = 1;
                                     continue;
@@ -577,7 +592,6 @@ repeat_doublequote_seek:
                 ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR,
                             curr_line, curr_inline_idx + idx, user);
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
-                NOOPTIMIZE(skip_mask);
                 if (idx + skip_idx >= 64)
                 {
                     p += idx + skip_idx + 1;
@@ -590,7 +604,6 @@ repeat_doublequote_seek:
             }
             else
             {
-                // TODO: 0b is gnu extension
                 if (size_ge_2)
                 {
                     u32 w = u32_loadu(x);
@@ -788,11 +801,14 @@ repeat_nl_seek:
                              || (w2 == TOK2('&', '='))
                              || (w2 == TOK2('^', '='))
                              || (w2 == TOK2('|', '='))
-                             || (w2 == TOK2('?', ':')))
+                             || (w2 == TOK2('?', ':'))
+                             /* TODO: Also compare with long comment token here;
+                                this should match * /, because if we find this
+                                token here it means we should end parsing with a
+                                lexing error */
+                        )
                     {
-                        /* TODO: This should match * /, because if we find this
-                           token here it means we should end parsing with a
-                           lexing error */
+
                         ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_inline_idx + idx, user);
 
                         u64 skip_idx = 1;
@@ -873,15 +889,16 @@ lex(char const* string, isize len, void* user)
     char string_tail[64 + 64]; /* TODO: Don't hardcode! */
     memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
-
     state.string = string_tail;
     state.string_end = string_tail + 64 - offset;
+
     if (UNLIKELY(state.out_in != IN_NONE))
     {
         switch (state.out_in) {
         case IN_STRING:
         {
             /* TODO: Run cb() after parsing this string! */
+            i32 more = 0;
             while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
             {
                 /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
@@ -893,6 +910,7 @@ lex(char const* string, isize len, void* user)
 
                 state.curr_inline_idx++;
                 state.string++;
+                more++;
             }
 
             if (UNLIKELY(state.string >= state.string_end))
@@ -903,6 +921,10 @@ lex(char const* string, isize len, void* user)
 
             state.curr_inline_idx++;
             state.string++;
+
+            ON_TOKEN_CB(p - state.in_string_parsed + 1, state.in_string_parsed + more - 1,
+                        T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
+                        state.in_string_line, state.in_string_idx, user);
         } break;
         case IN_SHORT_COMMENT:
         {
@@ -1041,12 +1063,6 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
     char const* f = (char const*) user;
     (void) f;
 
-    NOOPTIMIZE(str);
-    NOOPTIMIZE(len);
-    NOOPTIMIZE(type);
-    NOOPTIMIZE(line);
-    NOOPTIMIZE(idx);
-
     switch(type) {
     case T_IDENT:
     {
@@ -1086,7 +1102,7 @@ main(int argc, char** argv)
 {
     if (argc < 2)
     {
-        fprintf(stderr, "%s: fatal: Need a file", argv[0]);
+        fprintf(stderr, "%s: fatal: Need a file\n", argv[0]);
         exit(1);
     }
 
@@ -1116,10 +1132,10 @@ main(int argc, char** argv)
     struct stat st;
     fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
     isize fsize = st.st_size;
-    char* string = (char *) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
+    char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
-    lex_result r = lex(string, fsize, fname);
+    lex_result r = lex(string, fsize, (void*) fname);
     if (r.err != OK)
     {
         fprintf(stderr, "%s:%d:%d: error: %s\n", fname, r.curr_line, r.curr_inline_idx, lex_error_str[r.err]);
