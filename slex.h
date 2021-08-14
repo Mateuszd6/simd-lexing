@@ -109,6 +109,8 @@ typedef ptrdiff_t isize;
 // TODO: MSVC version of notreached __assume(0)
 #if (defined(__GNUC__) || defined(__clang__))
 #  define NOTREACHED __builtin_unreachable()
+#elif (defined(_MSC_VER))
+#  define NOTREACHED __assume(0)
 #else
 #  define NOTREACHED ((void) 0)
 #endif
@@ -180,9 +182,9 @@ struct lex_state
     char const* string;
     char const* string_end;
     i32 curr_line;
-    i32 curr_inline_idx; /* TODO: Rename to curr_idx */
+    i32 curr_idx;
     i32 carry;
-    i32 carry_tok_len; /* TODO: Rename + describe */
+    i32 carry_tok_len;
     i32 out_in;
     i32 in_string_line;
     i32 in_string_idx;
@@ -195,7 +197,7 @@ struct lex_result
 {
     i32 err;
     i32 curr_line;
-    i32 curr_inline_idx;
+    i32 curr_idx;
 };
 
 /* TODO: Probably remove? */
@@ -257,7 +259,7 @@ lex_s(lex_state* state, void* user)
     char const* p = state->string;
     char const* string_end = state->string_end;
     i32 curr_line = state->curr_line;
-    i32 curr_inline_idx = state->curr_inline_idx;
+    i32 curr_idx = state->curr_idx;
     i32 carry = state->carry;
     i32 carry_tok_len = state->carry_tok_len;
     i32 in = IN_NONE;
@@ -350,27 +352,25 @@ lex_s(lex_state* state, void* user)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
-        // TODO: Test with a token that spans > 2 buffers!
-
         /* If previous frame finished with an ident and this one starts with
          * one, it's a continuation of an old ident */
         if (carry == CARRY_IDENT)
         {
-            /* TODO: len, tok_type, line, idx must be saved from the prev stuff? */
-            if (LIKELY(idents_fullmask_rev != ((u32) 0))) /* It's a revert of ident mask, so we commpare to 0! */
+            /* It's a revert of ident mask, so we commpare to 0! */
+            if (LIKELY(idents_fullmask_rev != ((u32) 0)))
             {
                 i32 addidx = 0;
                 if (idents_mmask & 1)
                 {
                     s = (s & (s - 1)); /* Ignore first token */
                     u64 mask = idents_fullmask_rev & (~1);
-                    addidx = mask ? ctz64(mask) : 64; /* TODO, NOTE: To add to the original len */
+                    addidx = mask ? ctz64(mask) : 64;
                 }
 
                 char tok_start = *(p - carry_tok_len);
                 i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
                 ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
-                            curr_line, curr_inline_idx - carry_tok_len, user);
+                            curr_line, curr_idx - carry_tok_len, user);
             }
             else
             {
@@ -424,12 +424,12 @@ lex_s(lex_state* state, void* user)
             if (newline_mmask & ((u64)1 << idx))
             {
                 curr_line++;
-                curr_inline_idx = -idx;
+                curr_idx = -idx;
 
                 continue;
             }
 
-            if (idents_mmask & ((u64)1 << idx)) // TODO: digit
+            if (idents_mmask & ((u64)1 << idx))
             {
                 ASSERT(x[0] == '_'
                        || ('a' <= x[0] && x[0] <= 'z')
@@ -445,11 +445,11 @@ lex_s(lex_state* state, void* user)
 
                 /* If ident spans on more than one buffer frame, will be
                  * reported later */
-                if (s || carry == CARRY_NONE) // TODO: More like carry == CARRY_IDENT, but it's the same here
+                if (s || carry == CARRY_NONE)
                 {
                     i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
                     ON_TOKEN_CB(x, wsidx - idx, tok_type,
-                                curr_line, curr_inline_idx + idx, user);
+                                curr_line, curr_idx + idx, user);
                 }
                 else
                 {
@@ -457,14 +457,13 @@ lex_s(lex_state* state, void* user)
                     carry_tok_len = wsidx - idx;
                 }
             }
-            else if (x[0] == '"') // TODO: probably move down? Does it matter?
+            else if (x[0] == '"')
             {
-                curr_inline_idx += idx + 1; // TODO: try to avoid here?
+                curr_idx += idx + 1;
                 i32 str_start_line = curr_line;
-                i32 str_start_idx = curr_inline_idx;
+                i32 str_start_idx = curr_idx;
                 char const* strstart = x++;
 
-                // TODO: Don't increment index in the loop, calculate adv from the start?
                 for (;; x += sizeof(__m256i))
                 {
                     if (UNLIKELY(x >= string_end))
@@ -486,11 +485,6 @@ lex_s(lex_state* state, void* user)
                     __m256i nl_n = _mm256_cmpeq_epi8(nb, cmpmask_newline);
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
                     u32 nl_mm = _mm256_movemask_epi8(nl_n);
-
-                    /* TODO: This is incorrect!!! Calculate nl_mm | nb_mm and
-                     * handle doublequotes and newlines one-after-another! */
-
-
                     int nl_offset = 0;
                     i32 mask = nl_mm | nb_mm;
                     while (mask)
@@ -512,7 +506,7 @@ lex_s(lex_state* state, void* user)
                             p = x + mask_idx + 1;
                             ON_TOKEN_CB(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
                                         str_start_line, str_start_idx, user);
-                            curr_inline_idx += mask_idx + 1 - nl_offset;
+                            curr_idx += mask_idx + 1 - nl_offset;
                             carry = CARRY_NONE;
                             goto continue_outer;
                         }
@@ -525,19 +519,19 @@ lex_s(lex_state* state, void* user)
                                 if (bslashes & 1) /* Odd number of backslashes cancels out */
                                 {
                                     curr_line++;
-                                    curr_inline_idx = 1;
+                                    curr_idx = 1;
                                     nl_offset = mask_idx + 1;
                                     mask = mask & (mask - 1);
                                     continue;
                                 }
                             }
 
-                            curr_inline_idx += mask_idx - nl_offset;
+                            curr_idx += mask_idx - nl_offset;
                             goto err_newline_in_string;
                         }
                     }
 
-                    curr_inline_idx += 32 - nl_offset;
+                    curr_idx += 32 - nl_offset;
                 }
             }
             else if (x[0] == '\'')
@@ -562,24 +556,24 @@ lex_s(lex_state* state, void* user)
                             || UNLIKELY(x[4] > '9')
                             || UNLIKELY(x[5] != '\''))
                         {
-                            curr_inline_idx += idx;
+                            curr_idx += idx;
                             goto err_bad_char_literal;
                         }
                     }
                 }
                 else if (UNLIKELY(x[2] != '\''))
                 {
-                    curr_inline_idx += idx;
+                    curr_idx += idx;
                     goto err_bad_char_literal;
                 }
 
                 ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR,
-                            curr_line, curr_inline_idx + idx, user);
+                            curr_line, curr_idx + idx, user);
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
                     p += idx + skip_idx + 1;
-                    curr_inline_idx += idx + skip_idx + 1;
+                    curr_idx += idx + skip_idx + 1;
                     goto continue_outer;
                 }
 
@@ -657,7 +651,7 @@ repeat_nl_seek:
                                     || UNLIKELY(p[end_idx - 2] == '\\' && p[end_idx - 1] == '\r'))
                                 {
                                     curr_line++;
-                                    curr_inline_idx = 1; /* TODO: Probably not necesarry */
+                                    curr_idx = 1;
                                     cbuf_mm = (cbuf_mm & (cbuf_mm - 1));
                                     goto repeat_nl_seek;
                                 }
@@ -669,7 +663,7 @@ repeat_nl_seek:
 
                         p++;
                         curr_line++;
-                        curr_inline_idx = 1;
+                        curr_idx = 1;
                         carry = CARRY_NONE;
                         n_single_comments++;
                         goto continue_outer;
@@ -677,7 +671,7 @@ repeat_nl_seek:
                     else if (w2 == TOK2('/', '*'))
                     {
                         p = x + 2;
-                        curr_inline_idx += idx + 2;
+                        curr_idx += idx + 2;
                         for (;; p += sizeof(__m256i))
                         {
                             if (UNLIKELY(p >= string_end))
@@ -729,11 +723,11 @@ repeat_nl_seek:
                                     i32 nladv = 32 - clz32(cb_nl_mm);
                                     ASSERT(nladv < adv);
                                     curr_line += popcnt(cb_nl_mm);
-                                    curr_inline_idx = 1 + (adv - nladv);
+                                    curr_idx = 1 + (adv - nladv);
                                 }
                                 else
                                 {
-                                    curr_inline_idx += adv;
+                                    curr_idx += adv;
                                 }
 
                                 p += adv;
@@ -743,11 +737,11 @@ repeat_nl_seek:
                             if (cb_nl_mm)
                             {
                                 curr_line += popcnt(cb_nl_mm);
-                                curr_inline_idx = clz32(cb_nl_mm) + 1;
+                                curr_idx = clz32(cb_nl_mm) + 1;
                             }
                             else
                             {
-                                curr_inline_idx += 32;
+                                curr_idx += 32;
                             }
                         }
 
@@ -759,14 +753,14 @@ repeat_nl_seek:
                              || (w3 == TOK3('<', '<', '='))
                              || (w3 == TOK3('.', '.', '.')))
                     {
-                        ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_inline_idx + idx, user);
+                        ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 2;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
                         {
                             p += idx + skip_idx + 1;
-                            curr_inline_idx += idx + skip_idx + 1;
+                            curr_idx += idx + skip_idx + 1;
                             goto continue_outer;
                         }
 
@@ -800,14 +794,14 @@ repeat_nl_seek:
                         )
                     {
 
-                        ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_inline_idx + idx, user);
+                        ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 1;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
                         if (idx + skip_idx >= 64)
                         {
                             p += idx + skip_idx + 1;
-                            curr_inline_idx += idx + skip_idx + 1;
+                            curr_idx += idx + skip_idx + 1;
                             goto continue_outer;
                         }
 
@@ -816,12 +810,12 @@ repeat_nl_seek:
                     }
                 }
 
-                ON_TOKEN_CB(x, 1, T_OP, curr_line, curr_inline_idx + idx, user);
+                ON_TOKEN_CB(x, 1, T_OP, curr_line, curr_idx + idx, user);
             }
         }
 
         p += 64;
-        curr_inline_idx += 64;
+        curr_idx += 64;
 continue_outer:
         (void) 0;
     }
@@ -829,7 +823,7 @@ continue_outer:
 finalize:
     // Update state:
     state->curr_line = curr_line;
-    state->curr_inline_idx = curr_inline_idx;
+    state->curr_idx = curr_idx;
     state->carry = carry;
     state->carry_tok_len = carry_tok_len;
     state->out_in = in;
@@ -855,7 +849,7 @@ lex(char const* string, isize len, void* user)
     state.string = string;
     state.string_end = string + len - 64; /* TODO: Don't hardcode 64 */
     state.curr_line = 1;
-    state.curr_inline_idx = 1;
+    state.curr_idx = 1;
     state.carry = CARRY_NONE;
     if (LIKELY(len > 64))
     {
@@ -900,14 +894,13 @@ lex(char const* string, isize len, void* user)
                     i32 add = 1 + (*p == '\r');
                     more += add;
                     state.string += add;
-                    state.curr_inline_idx = 1;
+                    state.curr_idx = 1;
                     state.curr_line++;
                 }
             }
 
-            while (state.string < state.string_end && *state.string != '"') /* TODO: Check backqotes correctly! */
+            while (state.string < state.string_end && *state.string != '"')
             {
-                /* TODO: Check for buggy -1 when newline is at the beginning of the buffer: */
                 if (UNLIKELY(*state.string == '\n'))
                 {
                     if ((*(state.string - 1) != '\\'
@@ -917,11 +910,11 @@ lex(char const* string, isize len, void* user)
                         goto finalize;
                     }
 
-                    state.curr_inline_idx = 0;
+                    state.curr_idx = 0;
                     state.curr_line++;
                 }
 
-                state.curr_inline_idx++;
+                state.curr_idx++;
                 state.string++;
                 more++;
             }
@@ -932,7 +925,7 @@ lex(char const* string, isize len, void* user)
                 goto finalize;
             }
 
-            state.curr_inline_idx++;
+            state.curr_idx++;
             state.string++;
 
             ON_TOKEN_CB(p - state.in_string_parsed + 1, state.in_string_parsed + more - 1,
@@ -950,12 +943,11 @@ lex(char const* string, isize len, void* user)
                 {
                     i32 add = 1 + (*p == '\r');
                     state.string += add;
-                    state.curr_inline_idx = add;
+                    state.curr_idx = add;
                     state.curr_line++;
                 }
             }
 
-            /* TODO: Check for buggy -1 when newline is at the beginning of the buffer */
             while (state.string < state.string_end
                    && (*state.string != '\n'
                        || *(state.string - 1) == '\\'
@@ -964,7 +956,7 @@ lex(char const* string, isize len, void* user)
                 if (UNLIKELY(*state.string == '\n'))
                 {
                     state.curr_line++;
-                    state.curr_inline_idx = 1;
+                    state.curr_idx = 1;
                 }
 
                 state.string++;
@@ -977,7 +969,7 @@ lex(char const* string, isize len, void* user)
             }
 
             state.curr_line++;
-            state.curr_inline_idx = 1;
+            state.curr_idx = 1;
             state.string++;
             n_single_comments++;
         } break;
@@ -987,11 +979,11 @@ lex(char const* string, isize len, void* user)
             {
                 if (UNLIKELY(*state.string == '\n'))
                 {
-                    state.curr_inline_idx = 0;
+                    state.curr_idx = 0;
                     state.curr_line++;
                 }
 
-                state.curr_inline_idx++;
+                state.curr_idx++;
                 state.string++;
             }
 
@@ -1001,7 +993,7 @@ lex(char const* string, isize len, void* user)
                 goto finalize;
             }
 
-            state.curr_inline_idx += 2;
+            state.curr_idx += 2;
             state.string += 2;
             n_long_comments++;
         } break;
@@ -1018,7 +1010,7 @@ lex(char const* string, isize len, void* user)
                    || *state.string == '_')) /* TODO: All other character parts of an ident */
         {
             more++;
-            state.curr_inline_idx++;
+            state.curr_idx++;
             state.string++;
         }
 
@@ -1026,7 +1018,7 @@ lex(char const* string, isize len, void* user)
         i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
         state.carry = CARRY_NONE;
         ON_TOKEN_CB(p - state.carry_tok_len, state.carry_tok_len + more, tok_type,
-                    state.curr_line, state.curr_inline_idx - state.carry_tok_len - more,
+                    state.curr_line, state.curr_idx - state.carry_tok_len - more,
                     user);
     }
 
@@ -1076,7 +1068,7 @@ finalize:
         lex_result retval;
         retval.err = err;
         retval.curr_line = state.curr_line;
-        retval.curr_inline_idx = state.curr_inline_idx;
+        retval.curr_idx = state.curr_idx;
 
         return retval;
     }

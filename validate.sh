@@ -39,8 +39,8 @@ for f in ./tests/*.c; do
     else
         if ! diff -q ./mine.out "${f}.out" &> /dev/null || ! diff -q ./mine.err "${f}.err" &> /dev/null; then
             echo "FAILED"
-            diff --color ./mine.out "${f}.out"
-            diff --color ./mine.err "${f}.err"
+            diff --color=always ./mine.out "${f}.out"
+            diff --color=always ./mine.err "${f}.err"
         else
             echo "OK"
         fi

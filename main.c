@@ -121,7 +121,7 @@ main(int argc, char** argv)
     }
 
     struct stat st;
-    fstat(fd, &st); /* Get the size of the file. */ // TODO: Check retval of stat and fail
+    fstat(fd, &st); /* Get the size of the file. */ /* TODO: Check retval of stat and fail */
     isize fsize = st.st_size;
     char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
@@ -129,7 +129,8 @@ main(int argc, char** argv)
     lex_result r = lex(string, fsize, (void*) fname);
     if (r.err != OK)
     {
-        fprintf(stderr, "%s:%d:%d: error: %s\n", fname, r.curr_line, r.curr_inline_idx, lex_error_str[r.err]);
+        fprintf(stderr, "%s:%d:%d: error: %s\n",
+                fname, r.curr_line, r.curr_idx, lex_error_str[r.err]);
         exit(1);
     }
 
