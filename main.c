@@ -6,10 +6,26 @@
 #include <assert.h>
 #define ASSERT assert
 
-/* TODO: This should be a part of the example file, _before_ including this file */
 static inline void
 tok_print(char const* str, int len, int type, int line, int idx, void* user);
+
+/* Define all things that the lexer needs: */
+#define ALLOWED_TOK2                                                           \
+    DEF_TOK2('+', '+') DEF_TOK2('-', '-') DEF_TOK2('-', '>')                   \
+    DEF_TOK2('<', '<') DEF_TOK2('>', '>') DEF_TOK2('&', '&')                   \
+    DEF_TOK2('|', '|') DEF_TOK2('<', '=') DEF_TOK2('>', '=')                   \
+    DEF_TOK2('=', '=') DEF_TOK2('!', '=') DEF_TOK2('+', '=')                   \
+    DEF_TOK2('-', '=') DEF_TOK2('*', '=') DEF_TOK2('/', '=')                   \
+    DEF_TOK2('%', '=') DEF_TOK2('&', '=') DEF_TOK2('^', '=')                   \
+    DEF_TOK2('|', '=') DEF_TOK2('?', ':')
+
+#define ALLOWED_TOK3                                                           \
+    DEF_TOK3('>', '>', '=')                                                    \
+    DEF_TOK3('<', '<', '=')                                                    \
+    DEF_TOK3('.', '.', '.')
+
 #define ON_TOKEN_CB tok_print
+
 
 /* TODO: Get rid of them! */
 #if 1

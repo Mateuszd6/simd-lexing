@@ -15,12 +15,12 @@ debug:
 coverage:
 	${CC} ${CFLAGS} -g3 -O0                                                      \
         -DRELEASE=1 -DPRINT_TOKENS=1                                             \
-        -march=native                                                            \
+        -fsanitize=address,undefined -march=native                               \
         -fno-omit-frame-pointer -fstrict-aliasing                                \
         main.c -o main
 
 profile:
-	${CC} ${CFLAGS} -g -O3                                                          \
+	${CC} ${CFLAGS} -g -O3                                                       \
         -DRELEASE=1                                                              \
         -march=native                                                            \
         -fstrict-aliasing                                                        \

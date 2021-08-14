@@ -142,6 +142,9 @@ typedef ptrdiff_t isize;
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
 
+#define DEF_TOK2(X, Y) ||(w2 == TOK2(X, Y))
+#define DEF_TOK3(X, Y, Z) ||(w3 == TOK3(X, Y, Z))
+
 enum carry
 {
     CARRY_NONE = 0,
@@ -265,12 +268,15 @@ lex_s(lex_state* state, void* user)
     __m256i cmpmask_A = _mm256_set1_epi8('A' - 1);
     __m256i cmpmask_Z = _mm256_set1_epi8('Z' + 1);
     __m256i cmpmask_underscore = _mm256_set1_epi8('_');
-    /* TODO: Add ability to also use these in token */
-    /* __m256i cmpmask_sinlequote = _mm256_set1_epi8('\''); */
-    /* __m256i cmpmask_dollar = _mm256_set1_epi8('$'); */
     __m256i cmpmask_newline = _mm256_set1_epi8('\n');
-    __m256i cmpmask_doublequote = _mm256_set1_epi8('\"');
+    __m256i cmpmask_doublequote = _mm256_set1_epi8('"');
+    __m256i cmpmask_backtick = _mm256_set1_epi8('`');
     __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); /* space - 1 */
+
+    __m256i stray_char_1 = _mm256_set1_epi8(9); /* HT */
+    __m256i stray_char_2 = _mm256_set1_epi8(13); /* CR */
+    __m256i stray_char_3 = _mm256_set1_epi8(' ');
+    __m256i stray_char_4 = _mm256_set1_epi8(127); /* DEL */
 
     while (p < string_end)
     {
@@ -296,10 +302,31 @@ lex_s(lex_state* state, void* user)
             _mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
         __m256i mask4_2 = _mm256_cmpeq_epi8(b_2, cmpmask_underscore);
 
+        /* Check out for stray characters: < 9(HT) or > 13(CR) or 127 (DEL)
+         * TODO? And maybe unicode? */
+        __m256i stray_mask_1_1 = _mm256_cmpgt_epi8(stray_char_1, b_1);
+        __m256i stray_mask_1_2 = _mm256_cmpgt_epi8(stray_char_1, b_2);
+        __m256i stray_mask_2_1 = _mm256_cmpgt_epi8(b_1, stray_char_2);
+        __m256i stray_mask_2_2 = _mm256_cmpgt_epi8(b_2, stray_char_2);
+        __m256i stray_mask_3_1 = _mm256_cmpgt_epi8(stray_char_3, b_1);
+        __m256i stray_mask_3_2 = _mm256_cmpgt_epi8(stray_char_3, b_2);
+        __m256i stray_mask_4_1 = _mm256_cmpeq_epi8(b_1, stray_char_4);
+        __m256i stray_mask_4_2 = _mm256_cmpeq_epi8(b_2, stray_char_4);
+
         __m256i idents_mask_1 = _mm256_or_si256(
             _mm256_or_si256(mask1_1, mask2_1), _mm256_or_si256(mask3_1, mask4_1));
         __m256i idents_mask_2 = _mm256_or_si256(
             _mm256_or_si256(mask1_2, mask2_2), _mm256_or_si256(mask3_2, mask4_2));
+
+        u32 stray_mmask_1 = _mm256_movemask_epi8(
+            _mm256_or_si256(
+                _mm256_or_si256(stray_mask_1_1, stray_mask_4_1),
+                _mm256_and_si256(stray_mask_2_1, stray_mask_3_1)));
+        u32 stray_mmask_2 = _mm256_movemask_epi8(
+            _mm256_or_si256(
+                _mm256_or_si256(stray_mask_1_2, stray_mask_4_2),
+                _mm256_and_si256(stray_mask_2_2, stray_mask_3_2)));
+        u64 stray_mmask = ((u64) stray_mmask_1) | ((u64) stray_mmask_2) << 32;
 
         __m256i idents_mask_shed_1 = mm_ext_shl8_si256(idents_mask_1);
         __m256i idents_mask_shed_2 = mm_ext_shl8_si256(idents_mask_2);
@@ -352,6 +379,12 @@ lex_s(lex_state* state, void* user)
         u64 fixup_mmask = ((u64) fixup_mmask_1) | ((u64) fixup_mmask_2) << 32;
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
+
+        if (UNLIKELY(stray_mmask))
+        {
+            curr_idx += ctz64(stray_mmask);
+            goto err_bad_character;
+        }
 
         /* If previous frame finished with an ident and this one starts with one, it's a
          * continuation of an old ident */
@@ -406,6 +439,13 @@ lex_s(lex_state* state, void* user)
             for (int i = 0; i < 64; ++i)
             {
                 if (common_mmask & ((u64)1 << i)) printf("*");
+                else printf(" ");
+            }
+            printf("|\n");
+            printf("|");
+            for (int i = 0; i < 64; ++i)
+            {
+                if (stray_mmask & ((u64)1 << i)) printf("*");
                 else printf(" ");
             }
             printf("|\n");
@@ -487,11 +527,11 @@ lex_s(lex_state* state, void* user)
                     u32 nb_mm = _mm256_movemask_epi8(nb_n);
                     u32 nl_mm = _mm256_movemask_epi8(nl_n);
                     int nl_offset = 0;
-                    i32 mask = nl_mm | nb_mm;
+                    u32 mask = nl_mm | nb_mm;
                     while (mask)
                     {
                         i32 mask_idx = mask ? ctz32(mask) : 32;
-                        if (LIKELY(nb_mm & (1 << mask_idx)))
+                        if (LIKELY(nb_mm & ((u32)1 << mask_idx)))
                         {
                             /* Doubleqote, check if backslashed */
                             if (UNLIKELY(x[mask_idx - 1] == '\\')
@@ -750,9 +790,7 @@ repeat_nl_seek:
                         n_long_comments++;
                         goto continue_outer;
                     }
-                    else if (    w3 == TOK3('>', '>', '=')
-                             || (w3 == TOK3('<', '<', '='))
-                             || (w3 == TOK3('.', '.', '.')))
+                    else if (0 ALLOWED_TOK3)
                     {
                         ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_idx + idx, user);
 
@@ -768,31 +806,11 @@ repeat_nl_seek:
                         s &= (~(skip_mask << idx));
                         continue;
                     }
-                    else if ((   w2 == TOK2('+', '+'))
-                             || (w2 == TOK2('-', '-'))
-                             || (w2 == TOK2('-', '>'))
-                             || (w2 == TOK2('<', '<'))
-                             || (w2 == TOK2('>', '>'))
-                             || (w2 == TOK2('&', '&'))
-                             || (w2 == TOK2('|', '|'))
-                             || (w2 == TOK2('<', '='))
-                             || (w2 == TOK2('>', '='))
-                             || (w2 == TOK2('=', '='))
-                             || (w2 == TOK2('!', '='))
-                             || (w2 == TOK2('+', '='))
-                             || (w2 == TOK2('-', '='))
-                             || (w2 == TOK2('*', '='))
-                             || (w2 == TOK2('/', '='))
-                             || (w2 == TOK2('%', '='))
-                             || (w2 == TOK2('&', '='))
-                             || (w2 == TOK2('^', '='))
-                             || (w2 == TOK2('|', '='))
-                             || (w2 == TOK2('?', ':'))
+                    else if (0 ALLOWED_TOK2)
                              /* TODO: Also compare with long comment token here;
                                 this should match * /, because if we find this
                                 token here it means we should end parsing with a
                                 lexing error */
-                        )
                     {
 
                         ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_idx + idx, user);
@@ -832,6 +850,9 @@ finalize:
 
     return error;
 
+err_bad_character:
+    error = ERR_BAD_CHARACTER;
+    goto finalize;
 
 err_bad_char_literal:
     error = ERR_BAD_CHAR_LITERAL;
@@ -852,31 +873,37 @@ lex(char const* string, isize len, void* user)
     state.curr_line = 1;
     state.curr_idx = 1;
     state.carry = CARRY_NONE;
+
+    char const* p;
+    char string_tail[64 * 2]; /* sizeof buffer + the same amount of whitespace */
+    memset(string_tail, ' ', sizeof(string_tail));
+
     if (LIKELY(len > 64))
     {
         err = lex_s(&state, user);
         if (UNLIKELY(err != OK))
             goto finalize;
+
+        p = state.out_at;
+        i32 offset = (i32) (p - state.string_end);
+        ASSERT(offset > 0);
+        memcpy(string_tail, state.string_end + offset, 64 - offset);
+        state.string = string_tail;
+        state.string_end = string_tail + 64 - offset;
     }
     else if (len > 0)
     {
         /* Fixup state, because len turned out to be too small */
-        state.string_end = string + len;
         state.out_at = string;
         state.out_in = IN_NONE;
+        memcpy(string_tail, state.string, len);
+        state.string = string_tail;
+        state.string_end = string_tail + len;
     }
     else
     {
         goto finalize;
     }
-
-    char const* p = state.out_at;
-    i32 offset = (i32) (p - state.string_end);
-    char string_tail[64 * 2]; /* sizeof buffer + the same amount of whitespace */
-    memset(string_tail, ' ', sizeof(string_tail));
-    memcpy(string_tail, state.string_end + offset, 64 - offset);
-    state.string = string_tail;
-    state.string_end = string_tail + 64 - offset;
 
     if (UNLIKELY(state.out_in != IN_NONE))
     {
@@ -1028,10 +1055,10 @@ lex(char const* string, isize len, void* user)
     printf("----------------------------------------------------------------\n");
     {
         printf("|");
-        for (u32 i = 0; i < sizeof(string_tail) - offset; ++i)
+        for (u32 i = 0; i < sizeof(string_tail); ++i)
             printf("%d", i % 10);
         printf("|\n|");
-        for (u32 i = 0; i < sizeof(string_tail) - offset; ++i)
+        for (u32 i = 0; i < sizeof(string_tail); ++i)
         {
             if (string_tail[i] == '\n') printf(" ");
             else if (!string_tail[i]) printf(" ");
