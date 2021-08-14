@@ -1,5 +1,4 @@
-/* TODO: 64 and 32 are hardcoded everywhere
- * TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
+/* TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
  * TODO: Treat characters with first bit set as valid parts of identfier (utf8)
  * TODO: Lexing floats properly
  * TODO: Prefix the API!
@@ -26,10 +25,6 @@
 #include <string.h> /* memset, memcpy */
 #include <stddef.h> /* size_t, ptrdiff_t */
 #include <stdint.h> /* (u)int(8,16,32,64) */
-
-/* TODO: Delete them */
-static int64_t n_single_comments;
-static int64_t n_long_comments;
 
 #ifdef _MSC_VER
 #  include <intrin.h>
@@ -85,6 +80,19 @@ msvc_msb64(uint64_t mask)
 }
 #endif
 
+/* TODO: Document this define */
+#ifndef U32_LOADU
+#  define U32_LOADU u32_loadu
+static inline uint32_t
+u32_loadu(void const* p)
+{
+    uint32_t retval;
+    memcpy(&retval, p, sizeof retval);
+
+    return retval;
+}
+#endif
+
 /* TODO: Remove these! */
 typedef int8_t i8;
 typedef uint8_t u8;
@@ -122,10 +130,8 @@ typedef ptrdiff_t isize;
 #  else
 #    define NOOPTIMIZE(EXPR) (void) (EXPR)
 #  endif
-#  define PRINT_LINES 0
 #else
 #  define NOOPTIMIZE(EXPR) ((void) 0)
-#  define PRINT_LINES 1
 #endif
 
 /* TODO: Remove!! */
@@ -157,7 +163,7 @@ enum lex_error
     ERR_BAD_CHARACTER, /* Char that should not appear in a file */
     ERR_BAD_CHAR_LITERAL, /* Char literal other than 'x', '\x' or '\xxx' */
     ERR_UNEXPECTED_COMMENT_END, /* Encoutered * / while not being in comment */
-    ERR_NEWLINE_IN_STRING, /* NL char without backslash in string */
+    ERR_NEWLINE_IN_STRING, /* LF char without backslash in string */
     ERR_EOF_AT_COMMENT, /* EOF without ending a comment */
     ERR_EOF_AT_STRING, /* EOF without ending a string */
     ERR_EOF_AT_CHAR, /* EOF without ending a '' char literal */
@@ -172,6 +178,18 @@ enum lex_type
     T_CHAR,
     T_DOUBLEQ_STR,
     T_BACKTICK_STR,
+};
+
+char const* lex_error_str[] = {
+    [OK] = "OK",
+    [ERR_NOMEM] = "Out of memory",
+    [ERR_BAD_CHARACTER] = "Unexpected character in file",
+    [ERR_BAD_CHAR_LITERAL] = "Invalid character literal",
+    [ERR_UNEXPECTED_COMMENT_END] = "Unexpected comment end",
+    [ERR_NEWLINE_IN_STRING] = "Unescaped newline in string",
+    [ERR_EOF_AT_COMMENT] = "Unexpected EOF in comment",
+    [ERR_EOF_AT_STRING] = "Unexpected EOF in string",
+    [ERR_EOF_AT_CHAR] = "Unexpected EOF in character literal", /* TODO: Test that, is it even possible? */
 };
 
 typedef struct lex_state lex_state;
@@ -210,33 +228,11 @@ union token_val
     /* TODO: T_FLOAT */
 };
 
-char const* lex_error_str[] = {
-    [OK] = "OK",
-    [ERR_NOMEM] = "Out of memory",
-    [ERR_BAD_CHARACTER] = "Unexpected character in file",
-    [ERR_BAD_CHAR_LITERAL] = "Invalid character literal",
-    [ERR_UNEXPECTED_COMMENT_END] = "Unexpected comment end",
-    [ERR_NEWLINE_IN_STRING] = "Unescaped newline in string",
-    [ERR_EOF_AT_COMMENT] = "Unexpected EOF in comment",
-    [ERR_EOF_AT_STRING] = "Unexpected EOF in string",
-    [ERR_EOF_AT_CHAR] = "Unexpected EOF in character literal", /* TODO: Test that, is it even possible? */
-};
-
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
     __m256i mask = _mm256_permute2x128_si256(a, a, _MM_SHUFFLE(0, 0, 3, 0));
     return _mm256_alignr_epi8(a, mask, 16-1);
-}
-
-/* TODO: Macro define this? */
-static inline u32
-u32_loadu(void const* p)
-{
-    u32 retval;
-    memcpy(&retval, p, sizeof retval);
-
-    return retval;
 }
 
 static inline i32
@@ -250,7 +246,6 @@ count_backslashes(char const* p)
     return backslashes;
 }
 
-__attribute__((flatten)) /* TODO: Only for gnu */
 static i32
 lex_s(lex_state* state, void* user)
 {
@@ -424,7 +419,7 @@ lex_s(lex_state* state, void* user)
             s = (s & (s - 1));
 
             /* Shift by idx + 1 is actually well defined, because if idx is 63, it means
-               that s is 0 and we won't check the second condition */
+             * that s is 0 and we won't check the second condition */
             u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
 
             if (newline_mmask & ((u64)1 << idx))
@@ -442,7 +437,7 @@ lex_s(lex_state* state, void* user)
                        || ('A' <= x[0] && x[0] <= 'Z')
                        || ('0' <= x[0] && x[0] <= '9'));
 
-                i32 wsidx = 64; /* TODO: no branch? */
+                i32 wsidx = 64;
                 if (LIKELY(idx < 63))
                 {
                     /* No overflow, because idx < 64 */
@@ -499,7 +494,8 @@ lex_s(lex_state* state, void* user)
                         if (LIKELY(nb_mm & (1 << mask_idx)))
                         {
                             /* Doubleqote, check if backslashed */
-                            if (UNLIKELY(x[mask_idx - 1] == '\\') || UNLIKELY(x[mask_idx - 2] == '\\'))
+                            if (UNLIKELY(x[mask_idx - 1] == '\\')
+                                || UNLIKELY(x[mask_idx - 2] == '\\'))
                             {
                                 int bslashes = count_backslashes(&x[mask_idx - 1]);
                                 if (bslashes & 1)
@@ -519,7 +515,8 @@ lex_s(lex_state* state, void* user)
                         else
                         {
                             /* Newline, check if backslashed correctly */
-                            if (LIKELY(x[mask_idx - 1] == '\\') || LIKELY(x[mask_idx - 2] == '\\'))
+                            if (LIKELY(x[mask_idx - 1] == '\\')
+                                || LIKELY(x[mask_idx - 2] == '\\'))
                             {
                                 int bslashes = count_backslashes(&x[mask_idx - 1]);
                                 if (bslashes & 1) /* Odd number of backslashes cancels out */
@@ -552,7 +549,6 @@ lex_s(lex_state* state, void* user)
                     else
                     {
                         /* Support three-num character literals ('\001') */
-                        /* TODO: Make sure this value is less than 128!! */
                         skip_idx = 5;
                         if (UNLIKELY(x[2] < '0')
                             || UNLIKELY(x[3] < '0')
@@ -560,7 +556,9 @@ lex_s(lex_state* state, void* user)
                             || UNLIKELY(x[2] > '9')
                             || UNLIKELY(x[3] > '9')
                             || UNLIKELY(x[4] > '9')
-                            || UNLIKELY(x[5] != '\''))
+                            || UNLIKELY(x[5] != '\'')
+                            /* Make sure val is < 256: */
+                            || UNLIKELY(x[2] >= '2' && x[3] >= '5' && x[4] > '6'))
                         {
                             curr_idx += idx;
                             goto err_bad_char_literal;
@@ -573,8 +571,7 @@ lex_s(lex_state* state, void* user)
                     goto err_bad_char_literal;
                 }
 
-                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR,
-                            curr_line, curr_idx + idx, user);
+                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
@@ -590,7 +587,7 @@ lex_s(lex_state* state, void* user)
             {
                 if (size_ge_2)
                 {
-                    u32 w = u32_loadu(x);
+                    u32 w = U32_LOADU(x);
                     u32 w2 = w & 0xFFFF;
                     u32 w3 = w & 0xFFFFFF;
 
@@ -687,7 +684,6 @@ repeat_nl_seek:
                             }
 
                             __m256i comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
-                            /* TODO: This is very misleading, cb_2 is _before_ cb_1 !! */
                             __m256i cb_1 = _mm256_loadu_si256((void*) p);
                             __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
                             __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
@@ -852,7 +848,7 @@ lex(char const* string, isize len, void* user)
     i32 err = OK;
     lex_state state;
     state.string = string;
-    state.string_end = string + len - 64; /* TODO: Don't hardcode 64 */
+    state.string_end = string + len - 64;
     state.curr_line = 1;
     state.curr_idx = 1;
     state.carry = CARRY_NONE;
@@ -876,7 +872,7 @@ lex(char const* string, isize len, void* user)
 
     char const* p = state.out_at;
     i32 offset = (i32) (p - state.string_end);
-    char string_tail[64 + 64]; /* TODO: Don't hardcode 64! */
+    char string_tail[64 * 2]; /* sizeof buffer + the same amount of whitespace */
     memset(string_tail, ' ', sizeof(string_tail));
     memcpy(string_tail, state.string_end + offset, 64 - offset);
     state.string = string_tail;
@@ -980,7 +976,8 @@ lex(char const* string, isize len, void* user)
         } break;
         case IN_LONG_COMMENT:
         {
-            while (state.string < state.string_end - 1 && (*state.string != '*' || *(state.string + 1) != '/'))
+            while (state.string < state.string_end - 1
+                   && (*state.string != '*' || *(state.string + 1) != '/'))
             {
                 if (UNLIKELY(*state.string == '\n'))
                 {

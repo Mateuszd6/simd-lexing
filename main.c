@@ -11,17 +11,17 @@ static inline void
 tok_print(char const* str, int len, int type, int line, int idx, void* user);
 #define ON_TOKEN_CB tok_print
 
-#include "slex.h"
-
 /* TODO: Get rid of them! */
 #if 1
-static i64 n_parsed_idents = 0;
-static i64 n_parsed_numbers = 0;
-static i64 n_parsed_strings = 0;
-static i64 n_parsed_chars = 0;
-static i64 n_single_comments = 0;
-static i64 n_long_comments = 0;
+static long n_parsed_idents = 0;
+static long n_parsed_numbers = 0;
+static long n_parsed_strings = 0;
+static long n_parsed_chars = 0;
+static long n_single_comments = 0;
+static long n_long_comments = 0;
 #endif
+
+#include "slex.h"
 
 #if USE_MMAP
 #  include <fcntl.h>

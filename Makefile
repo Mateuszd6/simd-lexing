@@ -20,11 +20,12 @@ coverage:
         main.c -o main
 
 profile:
-	${CC} ${CFLAGS} -O3                                                          \
+	${CC} ${CFLAGS} -g -O3                                                          \
         -DRELEASE=1                                                              \
         -march=native                                                            \
         -fstrict-aliasing                                                        \
         main.c -o main
+	perf record -g ./main ./test2.c
 
 release:
 	${CC} ${CFLAGS} -O3                                                          \
