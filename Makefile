@@ -1,39 +1,46 @@
-.PHONY: all validate snapshot clear
+.PHONY: all debug coverage profile release validate snapshot clear
 
-all:
-	# DEBUG
-	# gcc -O0 -g3 -Wall -Wextra -Wshadow -Wno-unused-function                      \
-        # -DDEBUG=1 -DPRINT_LINES=1 -DPRINT_TOKENS=1                               \
-	    # -march=native                                                            \
-	    # -fsanitize=address,undefined -fstrict-aliasing                           \
-	    # main.c -o main
+CC=gcc
+CFLAGS=--std=c99 -pedantic -Wextra -Wshadow -Wno-unused-function
 
-	# COVERAGE
-	gcc --std=c99 -pedantic -g3 -O0 -Wall -Wextra -Wshadow -Wno-unused-function  \
-		-DRELEASE=1 -DPRINT_TOKENS=1                                             \
-	    -march=native                                                            \
-	    -fno-omit-frame-pointer -fstrict-aliasing                                \
-	    main.c -o main
+all: debug
 
-	# PROFILE
-	# gcc -O3 -Wall -Wextra -Wshadow -Wno-unused-function                          \
-        # -DRELEASE=1                                                              \
-	    # -march=native                                                            \
-	    # -fstrict-aliasing                                                        \
-	    # main.c -o main
+debug:
+	${CC} ${CFLAGS} -g3 -O0                                                      \
+        -DDEBUG=1 -DPRINT_TOKENS=1 -DPRINT_LINES=1                               \
+        -march=native                                                            \
+        -fsanitize=address,undefined -fno-omit-frame-pointer -fstrict-aliasing   \
+        main.c -o main
 
-	# RELEASE
-	# gcc -O3 -Wall -Wextra -Wshadow -Wno-unused-function                          \
-        # -DRELEASE=1                                                              \
-	    # -march=native                                                            \
-	    # -fstrict-aliasing                                                        \
-	    # main.c -o main
+coverage:
+	${CC} ${CFLAGS} -g3 -O0                                                      \
+        -DRELEASE=1 -DPRINT_TOKENS=1                                             \
+        -march=native                                                            \
+        -fno-omit-frame-pointer -fstrict-aliasing                                \
+        main.c -o main
 
-validate:
+profile:
+	${CC} ${CFLAGS} -O3                                                          \
+        -DRELEASE=1                                                              \
+        -march=native                                                            \
+        -fstrict-aliasing                                                        \
+        main.c -o main
+
+release:
+	${CC} ${CFLAGS} -O3                                                          \
+        -DRELEASE=1                                                              \
+        -march=native                                                            \
+        -fstrict-aliasing                                                        \
+        main.c -o main
+
+validate: coverage
 	@./validate.sh
 
-snapshot:
+snapshot: coverage
 	@./validate.sh --snapshot
+
+bench: release
+	@./run.sh
 
 clean:
 	rm -rf main

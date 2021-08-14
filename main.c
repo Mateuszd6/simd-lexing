@@ -1,8 +1,6 @@
-// TODO: 64 and 32 are hardcoded everywhere
-// TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
-// TODO: Treat characters with first bit set as valid parts of identfier (utf8)
-// TODO: Lexing floats properly
-
+#ifdef __linux__
+#  define USE_MMAP 1
+#endif
 
 /* TODO: Remove this when done */
 #include <assert.h>
@@ -15,7 +13,7 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
 #include "slex.h"
 
-// TODO: Get rid of them!
+/* TODO: Get rid of them! */
 #if 1
 static i64 n_parsed_idents = 0;
 static i64 n_parsed_numbers = 0;
@@ -25,21 +23,16 @@ static i64 n_single_comments = 0;
 static i64 n_long_comments = 0;
 #endif
 
-/* */
-/* TODO: These go to example file! */
-/* */
-#define USE_MMAP 1
-
-#ifdef _MSC_VER
-#  define _CRT_SECURE_NO_DEPRECATE
-#endif
-#include <stdio.h>
-
 #if USE_MMAP
 #  include <fcntl.h>
 #  include <sys/mman.h>
 #  include <sys/stat.h>
 #endif
+
+#ifdef _MSC_VER
+#  define _CRT_SECURE_NO_DEPRECATE
+#endif
+#include <stdio.h>
 
 static inline void
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)

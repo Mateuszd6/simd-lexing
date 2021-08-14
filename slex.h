@@ -51,11 +51,10 @@ static int64_t n_long_comments;
 #  pragma intrinsic(_BitScanReverse64)
 #  define ctz32(V) (msvc_ctz32((uint32_t) V))
 #  define ctz64(V) (msvc_ctz64((uint64_t) V))
-#  define clz32(V) (31 - msvc_clz32((uint32_t) V))
-#  define clz64(V) (63 - msvc_clz64((uint64_t) V))
+#  define clz32(V) (31 - msvc_msb32((uint32_t) V))
+#  define clz64(V) (63 - msvc_msb64((uint64_t) V))
 #  define popcnt64(V) (__popcnt64((uint64_t) V))
 #  define popcnt(V) (__popcnt((uint32_t) V))
-
 __forceinline static int32_t
 msvc_ctz32(uint32_t mask)
 {
@@ -71,14 +70,14 @@ msvc_ctz64(uint64_t mask)
     return (int32_t) index;
 }
 __forceinline static int32_t
-msvc_clz32(uint32_t mask)
+msvc_msb32(uint32_t mask)
 {
     unsigned long index = 0;
     _BitScanReverse(&index, mask);
     return (int32_t) index;
 }
 __forceinline static int32_t
-msvc_clz64(uint64_t mask)
+msvc_msb64(uint64_t mask)
 {
     unsigned long index = 0;
     _BitScanReverse64(&index, mask);
@@ -106,7 +105,6 @@ typedef ptrdiff_t isize;
 #  define UNLIKELY(EXPR) (EXPR)
 #endif
 
-// TODO: MSVC version of notreached __assume(0)
 #if (defined(__GNUC__) || defined(__clang__))
 #  define NOTREACHED __builtin_unreachable()
 #elif (defined(_MSC_VER))
@@ -200,9 +198,9 @@ struct lex_result
     i32 curr_idx;
 };
 
-/* TODO: Probably remove? */
-typedef union token token;
-union token
+/* TODO: Use it in "simple" mode */
+typedef union token_val token_val;
+union token_val
 {
     char* ident;
     char* integer;
@@ -287,18 +285,26 @@ lex_s(lex_state* state, void* user)
         __m256i charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
         __m256i charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
 
-        __m256i mask1_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_1));
-        __m256i mask2_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_1));
-        __m256i mask3_1 = _mm256_and_si256(_mm256_cmpgt_epi8(b_1, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_1));
+        __m256i mask1_1 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_1, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_1));
+        __m256i mask2_1 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_1, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_1));
+        __m256i mask3_1 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_1, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_1));
         __m256i mask4_1 = _mm256_cmpeq_epi8(b_1, cmpmask_underscore);
 
-        __m256i mask1_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_2));
-        __m256i mask2_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_2));
-        __m256i mask3_2 = _mm256_and_si256(_mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
+        __m256i mask1_2 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_2, cmpmask_0), _mm256_cmpgt_epi8(cmpmask_9, b_2));
+        __m256i mask2_2 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_2, cmpmask_a), _mm256_cmpgt_epi8(cmpmask_z, b_2));
+        __m256i mask3_2 = _mm256_and_si256(
+            _mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
         __m256i mask4_2 = _mm256_cmpeq_epi8(b_2, cmpmask_underscore);
 
-        __m256i idents_mask_1 = _mm256_or_si256(_mm256_or_si256(mask1_1, mask2_1), _mm256_or_si256(mask3_1, mask4_1));
-        __m256i idents_mask_2 = _mm256_or_si256(_mm256_or_si256(mask1_2, mask2_2), _mm256_or_si256(mask3_2, mask4_2));
+        __m256i idents_mask_1 = _mm256_or_si256(
+            _mm256_or_si256(mask1_1, mask2_1), _mm256_or_si256(mask3_1, mask4_1));
+        __m256i idents_mask_2 = _mm256_or_si256(
+            _mm256_or_si256(mask1_2, mask2_2), _mm256_or_si256(mask3_2, mask4_2));
 
         __m256i idents_mask_shed_1 = mm_ext_shl8_si256(idents_mask_1);
         __m256i idents_mask_shed_2 = mm_ext_shl8_si256(idents_mask_2);
@@ -330,9 +336,9 @@ lex_s(lex_state* state, void* user)
         u32 idents_mmask_1 = idents_m1_1 | (idents_m2_1 >> 1);
         u32 idents_mmask_2 = idents_m1_2 | (idents_m2_2 >> 1);
 
-        // Avoid branching - if last char of first buf is an alhpa, then second
-        // part can't start with ident. Since we disable the first bit of the
-        // second part, we and with bit-flipped 1 or 0.
+        /* Avoid branching - if last char of first buf is an alhpa, then second part can't
+         * start with ident. Since we disable the first bit of the second part, we and
+         * with bit-flipped 1 or 0. */
         u32 fixup_mmask_1 = _mm256_movemask_epi8(idents_mask_1);
         u32 fixup_mmask_2 = _mm256_movemask_epi8(idents_mask_2);
         idents_mmask_2 &= ~((u32) ((fixup_mmask_1 & (((u32) 1) << 31)) != 0 ? 1 : 0));
@@ -352,8 +358,8 @@ lex_s(lex_state* state, void* user)
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
 
-        /* If previous frame finished with an ident and this one starts with
-         * one, it's a continuation of an old ident */
+        /* If previous frame finished with an ident and this one starts with one, it's a
+         * continuation of an old ident */
         if (carry == CARRY_IDENT)
         {
             /* It's a revert of ident mask, so we commpare to 0! */
@@ -374,8 +380,8 @@ lex_s(lex_state* state, void* user)
             }
             else
             {
-                /* This is a very unlikely case; we've loaded a buffer, which is
-                 * whole a continuation of current token, and is not finished */
+                /* This is a very unlikely case; we've loaded a buffer, which is whole a
+                 * continuation of current token, and is not finished */
                 s = (s & (s - 1)); /* Ignore first token */
                 carry_tok_len += 64;
             }
@@ -417,8 +423,8 @@ lex_s(lex_state* state, void* user)
             char const* x = p + idx;
             s = (s & (s - 1));
 
-            /* Shift by idx + 1 is actually well defined, because if idx is 63,
-               it means that s is 0 and we won't check the second condition */
+            /* Shift by idx + 1 is actually well defined, because if idx is 63, it means
+               that s is 0 and we won't check the second condition */
             u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
 
             if (newline_mmask & ((u64)1 << idx))
@@ -439,12 +445,12 @@ lex_s(lex_state* state, void* user)
                 i32 wsidx = 64; /* TODO: no branch? */
                 if (LIKELY(idx < 63))
                 {
-                    u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1)); // TODO: Overflow shift?
+                    /* No overflow, because idx < 64 */
+                    u64 mask = idents_fullmask_rev & (~(((u64) 1 << (idx + 1)) - 1));
                     wsidx = mask ? ctz64(mask) : 64;
                 }
 
-                /* If ident spans on more than one buffer frame, will be
-                 * reported later */
+                /* If ident spans more than one buffer, will be reported later */
                 if (s || carry == CARRY_NONE)
                 {
                     i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
@@ -597,9 +603,8 @@ lex_s(lex_state* state, void* user)
                             if (UNLIKELY(p[comment_end_idx - 1] == '\\')
                                 || (UNLIKELY(p[comment_end_idx - 2] == '\\')))
                             {
-                                /* Don't do fast skip, when we have some creepy
-                                 * backslashes next to the newline. Might give
-                                 * some false positives though. */
+                                /* Don't do fast skip, when we have some creepy \s next to
+                                 * the newline. Might give some false positives though. */
                                 goto skip_long;
                             }
 
@@ -642,8 +647,8 @@ skip_long:
                             u32 cbuf_mm = _mm256_movemask_epi8(cbuf_n);
 
 repeat_nl_seek:
-                            /* At least with gcc, backslash in multi-line
-                             * single-line-comments cannot be escaped */
+                            /* At least with gcc, backslash in multi-line single line
+                             * comments cannot be escaped */
                             if (cbuf_mm)
                             {
                                 i32 end_idx = ctz32(cbuf_mm);
@@ -682,7 +687,7 @@ repeat_nl_seek:
                             }
 
                             __m256i comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
-                            // TODO: This is very misleading, cb_2 is _before_ cb_1 !!
+                            /* TODO: This is very misleading, cb_2 is _before_ cb_1 !! */
                             __m256i cb_1 = _mm256_loadu_si256((void*) p);
                             __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
                             __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
@@ -821,7 +826,7 @@ continue_outer:
     }
 
 finalize:
-    // Update state:
+    /* Update state: */
     state->curr_line = curr_line;
     state->curr_idx = curr_idx;
     state->carry = carry;
@@ -859,7 +864,7 @@ lex(char const* string, isize len, void* user)
     }
     else if (len > 0)
     {
-        // Fixup state, because len turned out to be too small
+        /* Fixup state, because len turned out to be too small */
         state.string_end = string + len;
         state.out_at = string;
         state.out_in = IN_NONE;
@@ -1074,4 +1079,4 @@ finalize:
     }
 }
 
-#endif // SLEX_H_
+#endif /* SLEX_H_ */
