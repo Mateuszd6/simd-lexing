@@ -13,7 +13,7 @@
  * on each token. For performance reasons, the function should be a static
  * inline and be defined in a same translation unit (that's the point, an API
  * with a function pointer is slower, even if function is static and defined in
- * the same file!). Callback should have a signature:
+ * the same file!). Callback should have a signature: TODO: MOve to defines
 
  * void func(char const* s, i32 x, i32 type, i32 line, i32 idx, void* user)
  * where:
@@ -28,6 +28,7 @@
  *   U32_LOADU - to a func with a signature uint32_t u32_loadu(void const* p),
  *   which is used by the lexer to read unaligned dword from memory pointed by p.
  *   If none is provided, a reasonable (memcpy) default is definde and used.
+ *   TODO: memcpy, memset
  */
 
 #include <string.h> /* memset, memcpy */
@@ -221,6 +222,45 @@ struct lex_state
     char const* out_at;
 };
 
+/* TODO: Use it in "simple" mode */
+typedef union token_val token_val;
+union token_val
+{
+    struct
+    {
+        char* p;
+        i32 len;
+    } ident;
+    struct
+    {
+        char* p;
+        i32 len;
+    } str;
+    long long i;
+    double d;
+    u32 op;
+    u32 ch;
+};
+
+typedef struct token token;
+struct token
+{
+    token_val val;
+
+    i32 type;
+    i32 curr_line;
+    i32 curr_idx;
+};
+
+typedef struct lex_token_buf lex_token_buf;
+struct lex_token_buf
+{
+    token* tokens;
+    isize len;
+    isize capacity;
+    int can_grow;
+};
+
 typedef struct lex_result lex_result;
 struct lex_result
 {
@@ -229,17 +269,86 @@ struct lex_result
     i32 curr_idx;
 };
 
-/* TODO: Use it in "simple" mode */
-typedef union token_val token_val;
-union token_val
+/* Like lex_result but also contains a buffer filled with tokens. */
+typedef struct lex_result_v lex_result_v;
+struct lex_result_v
 {
-    char* ident;
-    char* integer;
-    char* str;
-    u32 op;
-    u32 ch;
-    /* TODO: T_FLOAT */
+    token* tokens;
+    isize len;
+    i32 err;
+    i32 curr_line;
+    i32 curr_idx;
 };
+
+#ifndef ON_TOKEN_CB
+#  define SIMPLE_API 1 /* TODO: Rename? */
+#  define ON_TOKEN_CB simple_on_token_cb
+static inline void
+simple_on_token_cb(char const* str, int len, int type, int line, int idx, void* user)
+{
+    lex_token_buf* buf = (lex_token_buf*) user;
+    token_val v = {0};
+    /* switch(type) { */
+    /* case T_IDENT: */
+    {
+        v.ident.p = (char*) str;
+        v.ident.len = len;
+    }
+    /* } break; */
+    /* case T_INTEGER: */
+    /* { */
+        /* v.i = 0; /\* TODO: Parse with atoi *\/ */
+    /* } break; */
+    /* case T_DOUBLEQ_STR: */
+    /* case T_BACKTICK_STR: */
+    /* { */
+        /* v.str.p = (char*) str; */
+        /* v.str.len = len; */
+    /* } break; */
+    /* case T_CHAR: */
+    /* { */
+        /* v.ch = len; /\* TODO: Use "len" for this? *\/ */
+    /* } break; */
+    /* case T_OP: */
+    /* { */
+        /* v.ch = TOK1('\0'); /\* TODO: Use "len" for this? *\/ */
+    /* } break; */
+    /* case T_FLOAT: */
+    /* { */
+        /* v.d = 0.0f; /\* TODO: Use "len" for this? *\/ */
+    /* } break; */
+    /* default: NOTREACHED; */
+    /* } */
+
+    if (UNLIKELY(buf->len >= buf->capacity))
+    {
+        if (UNLIKELY(!buf->can_grow))
+        {
+            /* TODO: */
+            /* fprintf(stderr, "Out of memory\n"); */
+            exit(1);
+        }
+
+        isize new_capacity = buf->capacity * 2;
+        void* mem = realloc(buf->tokens, buf->capacity * 2);
+        if (UNLIKELY(!mem))
+        {
+            /* TODO: */
+            /* fprintf(stderr, "Out of memory\n"); */
+            exit(1);
+        }
+
+        buf->len = buf->capacity * 2;
+    }
+
+    token t;
+    t.val = v;
+    t.type = type;
+    t.curr_line = line;
+    t.curr_idx = idx;
+    buf->tokens[buf->len++] = t;
+}
+#endif
 
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
@@ -591,17 +700,34 @@ lex_s(lex_state* state, void* user)
             else if (x[0] == '\'')
             {
                 u64 skip_idx = 2;
+                u32 val = x[1];
                 if (x[1] == '\\')
                 {
                     if (LIKELY(x[3] == '\''))
                     {
+                        /*
+                        TODO: Use these to transoform the characters!
+                        \a  07
+                        \b  08
+                        \e  1B
+                        \f  0C
+                        \n  0A
+                        \r  0D
+                        \t  09
+                        \v  0B
+                        \\  5C
+                        \'  27
+                        \"  22
+                        \?  3F
+                        */
+                        val = x[2];
                         skip_idx = 3;
                     }
                     else
                     {
                         /* Support three-num character literals ('\001') */
                         skip_idx = 5;
-                        if (UNLIKELY(x[2] < '0')
+                        if (   UNLIKELY(x[2] < '0')
                             || UNLIKELY(x[3] < '0')
                             || UNLIKELY(x[4] < '0')
                             || UNLIKELY(x[2] > '9')
@@ -622,7 +748,7 @@ lex_s(lex_state* state, void* user)
                     goto err_bad_char_literal;
                 }
 
-                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
+                ON_TOKEN_CB(x + 1, val, T_CHAR, curr_line, curr_idx + idx, user);
                 u64 skip_mask = (1 << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
@@ -871,8 +997,8 @@ err_newline_in_string:
     goto finalize;
 }
 
-lex_result
-lex(char const* string, isize len, void* user)
+/* TODO: Extern? */ lex_result
+lex_cb(char const* string, isize len, void* user)
 {
     i32 err = OK;
     lex_state state;
@@ -1113,5 +1239,48 @@ finalize:
         return retval;
     }
 }
+
+#if SIMPLE_API
+/* TODO: Extern? */ lex_result_v
+lex_m(char const* string, isize len, token* mem, isize size)
+{
+    lex_token_buf buf;
+    buf.tokens = mem;
+    buf.len = 0;
+    buf.capacity = size;
+    buf.can_grow = 0;
+
+    lex_result r = lex_cb(string, len, (void*) &buf);
+    lex_result_v result;
+    result.err = r.err;
+    result.curr_line = r.curr_line;
+    result.curr_idx = r.curr_idx;
+    result.tokens = buf.tokens;
+    result.len = buf.len;
+
+    return result;
+}
+
+/* TODO: Extern? */ lex_result_v
+lex(char const* string, isize len)
+{
+    /* TODO: Estimate number of token based on a file length */
+    lex_token_buf buf;
+    buf.tokens = realloc(0, 1024 * sizeof(token));
+    buf.len = 0;
+    buf.capacity = 1024;
+    buf.can_grow = 1;
+
+    lex_result r = lex_cb(string, len, (void*) &buf);
+    lex_result_v result;
+    result.err = r.err;
+    result.curr_line = r.curr_line;
+    result.curr_idx = r.curr_idx;
+    result.tokens = buf.tokens;
+    result.len = buf.len;
+
+    return result;
+}
+#endif
 
 #endif /* SLEX_H_ */

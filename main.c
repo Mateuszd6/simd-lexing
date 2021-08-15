@@ -29,7 +29,7 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
 #define SINGLELINE_COMMENT_START TOK2('/', '/')
 
-#define ON_TOKEN_CB tok_print
+/* #define ON_TOKEN_CB tok_print */
 
 
 /* TODO: Get rid of them! */
@@ -69,19 +69,31 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
     switch(type) {
     case T_IDENT:
     {
+#if PRINT_TOKENS
+        printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
+#endif
         n_parsed_idents++;
     } break;
     case T_INTEGER:
     {
+#if PRINT_TOKENS
+        printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
+#endif
         n_parsed_numbers++;
     } break;
     case T_DOUBLEQ_STR:
     case T_BACKTICK_STR:
     {
+#if PRINT_TOKENS
+        printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
+#endif
         n_parsed_strings++;
     } break;
     case T_CHAR:
     {
+#if PRINT_TOKENS
+        printf("%s:%d:%d: TOK %d (L = %d): \"%x\"\n", f, line, idx, type, len, len);
+#endif
         n_parsed_chars++;
     } break;
     /*
@@ -96,10 +108,6 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
     {
     } break;
     }
-
-#if PRINT_TOKENS
-    printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
-#endif
 }
 
 int
@@ -140,13 +148,21 @@ main(int argc, char** argv)
     char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
-    lex_result r = lex(string, fsize, (void*) fname);
+    lex_result_v r = lex(string, fsize);
     if (r.err != OK)
     {
         fprintf(stderr, "%s:%d:%d: error: %s\n",
                 fname, r.curr_line, r.curr_idx, lex_error_str[r.err]);
         exit(1);
     }
+
+#if PRINT_TOKENS
+    for (isize i = 0; i < r.len; ++i)
+    {
+        tok_print(r.tokens[i].val.ident.p, r.tokens[i].val.ident.len, r.tokens[i].type,
+                  r.tokens[i].curr_line, r.tokens[i].curr_idx, (void*) fname);
+    }
+#endif
 
     fprintf(stdout, "Parsed: "
             "%d lines, %ld ids, %ld strings, "
@@ -155,6 +171,8 @@ main(int argc, char** argv)
             r.curr_line, n_parsed_idents, n_parsed_strings,
             n_parsed_chars, n_parsed_numbers, 0L, 0L,
             n_single_comments, n_long_comments);
+
+    free(r.tokens);
 
     return 0;
 }
