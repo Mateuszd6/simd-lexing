@@ -24,6 +24,11 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
     DEF_TOK3('<', '<', '=')                                                    \
     DEF_TOK3('.', '.', '.')
 
+#define MULTILINE_COMMENT_START TOK2('/', '*')
+#define MULTILINE_COMMENT_END TOK2('*', '/')
+
+#define SINGLELINE_COMMENT_START TOK2('/', '/')
+
 #define ON_TOKEN_CB tok_print
 
 

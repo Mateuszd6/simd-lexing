@@ -1,5 +1,4 @@
-/* TODO: CHeck for stray characters; < 9(HT) or > 13(CR) or 127 (DEL)
- * TODO: Treat characters with first bit set as valid parts of identfier (utf8)
+/* TODO: Treat characters with first bit set as valid parts of identfier (utf8)
  * TODO: Lexing floats properly
  * TODO: Prefix the API!
  */
@@ -139,11 +138,16 @@ typedef ptrdiff_t isize;
 #  include <stdio.h>
 #endif
 
+#define TOK1(X) ((u32) X)
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
+#define TOK_ANY(P, LEN) (((u32) (P)[0]) | ((u32) (LEN > 1 ? (P)[1] : 0)) << 8 | ((u32) (LEN > 2 ? (P)[2] : 0)) << 16)
 
 #define DEF_TOK2(X, Y) ||(w2 == TOK2(X, Y))
 #define DEF_TOK3(X, Y, Z) ||(w3 == TOK3(X, Y, Z))
+
+#define TOK_BYTEMASK(X) ((X) < (1 << 8) ? 0xFF : ((X) < (1 << 16) ? 0xFFFF : 0xFFFFFF))
+#define TOK_NBYTES(X) ((X) < (1 << 8) ? 1 : ((X) < (1 << 16) ? 2 : 3))
 
 enum carry
 {
@@ -302,8 +306,9 @@ lex_s(lex_state* state, void* user)
             _mm256_cmpgt_epi8(b_2, cmpmask_A), _mm256_cmpgt_epi8(cmpmask_Z, b_2));
         __m256i mask4_2 = _mm256_cmpeq_epi8(b_2, cmpmask_underscore);
 
-        /* Check out for stray characters: < 9(HT) or > 13(CR) or 127 (DEL)
-         * TODO? And maybe unicode? */
+        /* Check out for stray characters: < 9(HT) or > 13(CR) or 127 (DEL) and
+         * unicode (because cmpqt is signed, so utf8 characters are treated as
+         * negative values and considered less than 9. */
         __m256i stray_mask_1_1 = _mm256_cmpgt_epi8(stray_char_1, b_1);
         __m256i stray_mask_1_2 = _mm256_cmpgt_epi8(stray_char_1, b_2);
         __m256i stray_mask_2_1 = _mm256_cmpgt_epi8(b_1, stray_char_2);
@@ -326,7 +331,6 @@ lex_s(lex_state* state, void* user)
             _mm256_or_si256(
                 _mm256_or_si256(stray_mask_1_2, stray_mask_4_2),
                 _mm256_and_si256(stray_mask_2_2, stray_mask_3_2)));
-        u64 stray_mmask = ((u64) stray_mmask_1) | ((u64) stray_mmask_2) << 32;
 
         __m256i idents_mask_shed_1 = mm_ext_shl8_si256(idents_mask_1);
         __m256i idents_mask_shed_2 = mm_ext_shl8_si256(idents_mask_2);
@@ -367,8 +371,8 @@ lex_s(lex_state* state, void* user)
 
         u32 idents_fullmask_rev_1 = ~((u32) _mm256_movemask_epi8(idents_mask_1));
         u32 idents_fullmask_rev_2 = ~((u32) _mm256_movemask_epi8(idents_mask_2));
-        u32 common_mmask_1 = toks_mmask_1 | idents_mmask_1 | newline_mmask_1;
-        u32 common_mmask_2 = toks_mmask_2 | idents_mmask_2 | newline_mmask_2;
+        u32 common_mmask_1 = toks_mmask_1 | idents_mmask_1 | newline_mmask_1 | stray_mmask_1;
+        u32 common_mmask_2 = toks_mmask_2 | idents_mmask_2 | newline_mmask_2 | stray_mmask_2;
 
         ASSERT((toks_mmask_1 & idents_mmask_1) == 0);
         ASSERT((toks_mmask_2 & idents_mmask_2) == 0);
@@ -376,15 +380,10 @@ lex_s(lex_state* state, void* user)
         u64 newline_mmask = ((u64) newline_mmask_1) | ((u64) newline_mmask_2) << 32;
         u64 idents_mmask = ((u64) idents_mmask_1) | ((u64) idents_mmask_2) << 32;
         u64 idents_fullmask_rev = ((u64) idents_fullmask_rev_1) | ((u64) idents_fullmask_rev_2) << 32;
+        u64 stray_mmask = ((u64) stray_mmask_1) | ((u64) stray_mmask_2) << 32;
         u64 fixup_mmask = ((u64) fixup_mmask_1) | ((u64) fixup_mmask_2) << 32;
         u64 common_mmask = ((u64) common_mmask_1) | ((u64) common_mmask_2) << 32;
         u64 s = common_mmask;
-
-        if (UNLIKELY(stray_mmask))
-        {
-            curr_idx += ctz64(stray_mmask);
-            goto err_bad_character;
-        }
 
         /* If previous frame finished with an ident and this one starts with one, it's a
          * continuation of an old ident */
@@ -461,6 +460,12 @@ lex_s(lex_state* state, void* user)
             /* Shift by idx + 1 is actually well defined, because if idx is 63, it means
              * that s is 0 and we won't check the second condition */
             u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
+
+            if (UNLIKELY(stray_mmask) & ((u64)1 << idx))
+            {
+                curr_idx += idx;
+                goto err_bad_character;
+            }
 
             if (newline_mmask & ((u64)1 << idx))
             {
@@ -625,172 +630,174 @@ lex_s(lex_state* state, void* user)
             }
             else
             {
-                if (size_ge_2)
+                u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+                u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+                u32 w = U32_LOADU(x);
+                u32 w2 = w & 0xFFFF;
+                u32 w3 = w & 0xFFFFFF;
+
+                if ((w & single_comment_bmask) == SINGLELINE_COMMENT_START)
                 {
-                    u32 w = U32_LOADU(x);
-                    u32 w2 = w & 0xFFFF;
-                    u32 w3 = w & 0xFFFFFF;
-
-                    if (w2 == TOK2('/', '/'))
+                    u64 m = s & newline_mmask;
+                    if (m) /* Short skip, newline in the same buf */
                     {
-                        u64 m = s & newline_mmask;
-                        if (m) /* Short skip, newline in the same buf */
+                        i32 comment_end_idx = ctz64(m);
+                        if (UNLIKELY(p[comment_end_idx - 1] == '\\')
+                            || (UNLIKELY(p[comment_end_idx - 2] == '\\')))
                         {
-                            i32 comment_end_idx = ctz64(m);
-                            if (UNLIKELY(p[comment_end_idx - 1] == '\\')
-                                || (UNLIKELY(p[comment_end_idx - 2] == '\\')))
-                            {
-                                /* Don't do fast skip, when we have some creepy \s next to
-                                 * the newline. Might give some false positives though. */
-                                goto skip_long;
-                            }
-
-                            s &= ~(((u64)1 << comment_end_idx) - 1);
-                            n_single_comments++;
-                            continue;
+                            /* Don't do fast skip, when we have some creepy \s next to
+                             * the newline. Might give some false positives though. */
+                            goto skip_long;
                         }
+
+                        s &= ~(((u64)1 << comment_end_idx) - 1);
+                        n_single_comments++;
+                        continue;
+                    }
 
 skip_long:
-                        p = x + 1;
-                        for (;; p += sizeof(__m256i))
+                    p = x + 1;
+                    for (;; p += sizeof(__m256i))
+                    {
+                        if (UNLIKELY(p >= string_end))
                         {
-                            if (UNLIKELY(p >= string_end))
-                            {
-                                in = IN_SHORT_COMMENT;
-                                carry = CARRY_NONE;
-                                goto finalize;
-                            }
-
-#if PRINT_LINES
-                            {
-                                printf("|");
-                                for (int i = 0; i < 32; ++i)
-                                    printf("%d", i % 10);
-                                printf("|\n");
-                                printf("|");
-                                for (int i = 0; i < 32; ++i)
-                                {
-                                    if (p[i] == '\n') printf(" ");
-                                    else if (!p[i]) printf(" ");
-                                    else printf("%c", p[i]);
-                                }
-                                printf("|\n");
-                                printf("\n");
-                            }
-#endif
-
-                            __m256i cbuf = _mm256_loadu_si256((__m256i*) p);
-                            __m256i cbuf_n = _mm256_cmpeq_epi8(cbuf, cmpmask_newline);
-                            u32 cbuf_mm = _mm256_movemask_epi8(cbuf_n);
-
-repeat_nl_seek:
-                            /* At least with gcc, backslash in multi-line single line
-                             * comments cannot be escaped */
-                            if (cbuf_mm)
-                            {
-                                i32 end_idx = ctz32(cbuf_mm);
-                                if (UNLIKELY(p[end_idx - 1] == '\\')
-                                    || UNLIKELY(p[end_idx - 2] == '\\' && p[end_idx - 1] == '\r'))
-                                {
-                                    curr_line++;
-                                    curr_idx = 1;
-                                    cbuf_mm = (cbuf_mm & (cbuf_mm - 1));
-                                    goto repeat_nl_seek;
-                                }
-
-                                p += end_idx;
-                                break;
-                            }
+                            in = IN_SHORT_COMMENT;
+                            carry = CARRY_NONE;
+                            goto finalize;
                         }
 
-                        p++;
-                        curr_line++;
-                        curr_idx = 1;
-                        carry = CARRY_NONE;
-                        n_single_comments++;
-                        goto continue_outer;
-                    }
-                    else if (w2 == TOK2('/', '*'))
-                    {
-                        p = x + 2;
-                        curr_idx += idx + 2;
-                        for (;; p += sizeof(__m256i))
-                        {
-                            if (UNLIKELY(p >= string_end))
-                            {
-                                in = IN_LONG_COMMENT;
-                                carry = CARRY_NONE;
-                                goto finalize;
-                            }
-
-                            __m256i comment_end = _mm256_set1_epi16((u16) TOK2('*', '/'));
-                            __m256i cb_1 = _mm256_loadu_si256((void*) p);
-                            __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
-                            __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
-                            __m256i cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
-                            __m256i cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
-                            u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
-                            u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
-                            u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
-                            u32 m1 = cb_mm_1 & 0xAAAAAAAA; /* 10101010... */
-                            u32 m2 = cb_mm_2 & 0x55555555; /* 01010101... */
 #if PRINT_LINES
+                        {
+                            printf("|");
+                            for (int i = 0; i < 32; ++i)
+                                printf("%d", i % 10);
+                            printf("|\n");
+                            printf("|");
+                            for (int i = 0; i < 32; ++i)
                             {
-                                printf("|");
-                                for (int i = 0; i < 32; ++i)
-                                    printf("%d", i % 10);
-                                printf("|\n");
-                                printf("|");
-                                for (int i = 0; i < 32; ++i)
-                                {
-                                    if (p[i] == '\n') printf(" ");
-                                    else if (!p[i]) printf(" ");
-                                    else printf("%c", p[i]);
-                                }
-                                printf("|\n");
-                                printf("\n");
+                                if (p[i] == '\n') printf(" ");
+                                else if (!p[i]) printf(" ");
+                                else printf("%c", p[i]);
                             }
+                            printf("|\n");
+                            printf("\n");
+                        }
 #endif
 
-                            u32 cb_mm = m1 | (m2 << 1);
-                            if (cb_mm)
-                            {
-                                i32 tz = ctz32(cb_mm);
-                                i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
-                                u32 adv_pow = (u32)1 << tz;
-                                cb_nl_mm &= adv_pow | (adv_pow - 1);
-                                if (cb_nl_mm)
-                                {
-                                    i32 nladv = 32 - clz32(cb_nl_mm);
-                                    ASSERT(nladv < adv);
-                                    curr_line += popcnt(cb_nl_mm);
-                                    curr_idx = 1 + (adv - nladv);
-                                }
-                                else
-                                {
-                                    curr_idx += adv;
-                                }
+                        __m256i cbuf = _mm256_loadu_si256((__m256i*) p);
+                        __m256i cbuf_n = _mm256_cmpeq_epi8(cbuf, cmpmask_newline);
+                        u32 cbuf_mm = _mm256_movemask_epi8(cbuf_n);
 
-                                p += adv;
-                                break;
+repeat_nl_seek:
+                        /* At least with gcc, backslash in multi-line single line
+                         * comments cannot be escaped */
+                        if (cbuf_mm)
+                        {
+                            i32 end_idx = ctz32(cbuf_mm);
+                            if (UNLIKELY(p[end_idx - 1] == '\\')
+                                || UNLIKELY(p[end_idx - 2] == '\\' && p[end_idx - 1] == '\r'))
+                            {
+                                curr_line++;
+                                curr_idx = 1;
+                                cbuf_mm = (cbuf_mm & (cbuf_mm - 1));
+                                goto repeat_nl_seek;
                             }
 
+                            p += end_idx;
+                            break;
+                        }
+                    }
+
+                    p++;
+                    curr_line++;
+                    curr_idx = 1;
+                    carry = CARRY_NONE;
+                    n_single_comments++;
+                    goto continue_outer;
+                }
+                else if ((w & multi_comment_bmask) == MULTILINE_COMMENT_START)
+                {
+                    p = x + 2;
+                    curr_idx += idx + 2;
+                    for (;; p += sizeof(__m256i))
+                    {
+                        if (UNLIKELY(p >= string_end))
+                        {
+                            in = IN_LONG_COMMENT;
+                            carry = CARRY_NONE;
+                            goto finalize;
+                        }
+
+                        __m256i comment_end = _mm256_set1_epi16(MULTILINE_COMMENT_END);
+                        __m256i cb_1 = _mm256_loadu_si256((void*) p);
+                        __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
+                        __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
+                        __m256i cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
+                        __m256i cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
+                        u32 cb_mm_1 = _mm256_movemask_epi8(cb_end_1);
+                        u32 cb_mm_2 = _mm256_movemask_epi8(cb_end_2);
+                        u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
+                        u32 m1 = cb_mm_1 & 0xAAAAAAAA; /* 10101010... */
+                        u32 m2 = cb_mm_2 & 0x55555555; /* 01010101... */
+#if PRINT_LINES
+                        {
+                            printf("|");
+                            for (int i = 0; i < 32; ++i)
+                                printf("%d", i % 10);
+                            printf("|\n");
+                            printf("|");
+                            for (int i = 0; i < 32; ++i)
+                            {
+                                if (p[i] == '\n') printf(" ");
+                                else if (!p[i]) printf(" ");
+                                else printf("%c", p[i]);
+                            }
+                            printf("|\n");
+                            printf("\n");
+                        }
+#endif
+
+                        u32 cb_mm = m1 | (m2 << 1);
+                        if (cb_mm)
+                        {
+                            i32 tz = ctz32(cb_mm);
+                            i32 adv = tz + 1 + ((((u32)1 << tz) & (m2 << 1)) != 0);
+                            u32 adv_pow = (u32)1 << tz;
+                            cb_nl_mm &= adv_pow | (adv_pow - 1);
                             if (cb_nl_mm)
                             {
+                                i32 nladv = 32 - clz32(cb_nl_mm);
+                                ASSERT(nladv < adv);
                                 curr_line += popcnt(cb_nl_mm);
-                                curr_idx = clz32(cb_nl_mm) + 1;
+                                curr_idx = 1 + (adv - nladv);
                             }
                             else
                             {
-                                curr_idx += 32;
+                                curr_idx += adv;
                             }
+
+                            p += adv;
+                            break;
                         }
 
-                        carry = CARRY_NONE;
-                        n_long_comments++;
-                        goto continue_outer;
+                        if (cb_nl_mm)
+                        {
+                            curr_line += popcnt(cb_nl_mm);
+                            curr_idx = clz32(cb_nl_mm) + 1;
+                        }
+                        else
+                        {
+                            curr_idx += 32;
+                        }
                     }
-                    else if (0 ALLOWED_TOK3)
+
+                    carry = CARRY_NONE;
+                    n_long_comments++;
+                    goto continue_outer;
+                }
+                else if (size_ge_2)
+                {
+                    if (0 ALLOWED_TOK3)
                     {
                         ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_idx + idx, user);
 
@@ -1003,8 +1010,10 @@ lex(char const* string, isize len, void* user)
         } break;
         case IN_LONG_COMMENT:
         {
-            while (state.string < state.string_end - 1
-                   && (*state.string != '*' || *(state.string + 1) != '/'))
+            u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
+            i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
+            while (state.string < state.string_end - nbytes
+                   &&  TOK_ANY(state.string, nbytes) != MULTILINE_COMMENT_END)
             {
                 if (UNLIKELY(*state.string == '\n'))
                 {
@@ -1016,8 +1025,9 @@ lex(char const* string, isize len, void* user)
                 state.string++;
             }
 
-            if (UNLIKELY(state.string >= state.string_end - 1))
+            if (UNLIKELY(state.string >= state.string_end - nbytes))
             {
+                state.curr_idx += nbytes - 1;
                 err = ERR_EOF_AT_COMMENT;
                 goto finalize;
             }
