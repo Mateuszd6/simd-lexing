@@ -1,5 +1,8 @@
 /* TODO: Treat characters with first bit set as valid parts of identfier (utf8)
+ * TODO: However, probably verify if the unicode is correct (like in simdjson?)
  * TODO: Lexing floats properly
+ * TODO: Add ability to add singlequote and backtick strings and maybe include
+ *       dollars and single quotes in the ident
  * TODO: Prefix the API!
  */
 
@@ -12,13 +15,19 @@
  * with a function pointer is slower, even if function is static and defined in
  * the same file!). Callback should have a signature:
 
- * void func(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
+ * void func(char const* s, i32 x, i32 type, i32 line, i32 idx, void* user)
  * where:
- *   TODO: Verify this docs
- *   len is a length of a string (if token is either ident, integer or string)
+ *   s and x vary based on a type:
+ *     * TODO: Describe them
  *   type is a token type enum
- *   line and idx are line and column number
+ *   line is a line number
+ *   idx is a column number withing this line (starting from 1)
  *   user is an arbitrary user data that gets passed in
+ *
+ * DEFINE:
+ *   U32_LOADU - to a func with a signature uint32_t u32_loadu(void const* p),
+ *   which is used by the lexer to read unaligned dword from memory pointed by p.
+ *   If none is provided, a reasonable (memcpy) default is definde and used.
  */
 
 #include <string.h> /* memset, memcpy */
@@ -79,7 +88,6 @@ msvc_msb64(uint64_t mask)
 }
 #endif
 
-/* TODO: Document this define */
 #ifndef U32_LOADU
 #  define U32_LOADU u32_loadu
 static inline uint32_t
@@ -173,18 +181,6 @@ enum lex_error
     ERR_NEWLINE_IN_STRING, /* LF char without backslash in string */
     ERR_EOF_AT_COMMENT, /* EOF without ending a comment */
     ERR_EOF_AT_STRING, /* EOF without ending a string */
-    ERR_EOF_AT_CHAR, /* EOF without ending a '' char literal */
-};
-
-enum lex_type
-{
-    T_IDENT,
-    T_OP,
-    T_INTEGER,
-    T_FLOAT,
-    T_CHAR,
-    T_DOUBLEQ_STR,
-    T_BACKTICK_STR,
 };
 
 char const* lex_error_str[] = {
@@ -196,7 +192,17 @@ char const* lex_error_str[] = {
     [ERR_NEWLINE_IN_STRING] = "Unescaped newline in string",
     [ERR_EOF_AT_COMMENT] = "Unexpected EOF in comment",
     [ERR_EOF_AT_STRING] = "Unexpected EOF in string",
-    [ERR_EOF_AT_CHAR] = "Unexpected EOF in character literal", /* TODO: Test that, is it even possible? */
+};
+
+enum token_type
+{
+    T_IDENT,
+    T_OP,
+    T_INTEGER,
+    T_FLOAT,
+    T_CHAR,
+    T_DOUBLEQ_STR,
+    T_BACKTICK_STR,
 };
 
 typedef struct lex_state lex_state;
@@ -814,12 +820,7 @@ repeat_nl_seek:
                         continue;
                     }
                     else if (0 ALLOWED_TOK2)
-                             /* TODO: Also compare with long comment token here;
-                                this should match * /, because if we find this
-                                token here it means we should end parsing with a
-                                lexing error */
                     {
-
                         ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 1;
@@ -1046,7 +1047,7 @@ lex(char const* string, isize len, void* user)
                && (   ('a' <= *state.string && *state.string <= 'z')
                    || ('A' <= *state.string && *state.string <= 'Z')
                    || ('0' <= *state.string && *state.string <= '9')
-                   || *state.string == '_')) /* TODO: All other character parts of an ident */
+                   || *state.string == '_'))
         {
             more++;
             state.curr_idx++;

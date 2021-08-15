@@ -1,0 +1,31 @@
+A very fast single-header C99 AVX2-accelerated lexer that does not use any
+tables, can be customized by manipulating macros and is on average 3-5 times
+faster than corresponding flex lexer.
+
+Nice things about it:
+* No code generation, include and call a function
+* No tables, custom language, etc
+* Simple API
+* It's fast
+* Can define you own callback (through macros) on each token for advanced usage
+* Handles some tricky things, which some "example" flex files don't, like
+  BACKSLASH-LF in string and single-line comments, CR-LF line endings etc
+
+It should work out of a box, but it's more of a prove-of-concept right now,
+probably if you fuzz it, you will get tones of bugs (although some tests are
+included, so not many "trivial" bugs should happen).
+
+Examples comming soon, I hope
+
+Speed for lexing the GCC source code (all GCC source concatenated into a single
+file, from: https://people.csail.mit.edu/smcc/projects/single-file-programs/ ),
+on my Skylake 2.40GHz i5 laptop;
+
+|-------------+----------|
+| Lexer:      | time(ms) |
+|-------------+----------|
+| flex        |      231 |
+| flex --fast |      102 |
+| flex --full |      106 |
+| simd-lex    |       34 |
+|-------------+----------|
