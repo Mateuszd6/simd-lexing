@@ -2,6 +2,14 @@
 #  define USE_MMAP 1
 #endif
 
+#ifdef _MSC_VER
+#  define _CRT_SECURE_NO_DEPRECATE
+#  define _CRT_SECURE_NO_WARNINGS
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+
 /* TODO: Remove this when done */
 #include <assert.h>
 #define ASSERT assert
@@ -49,11 +57,6 @@ static long n_long_comments = 0;
 #  include <sys/mman.h>
 #  include <sys/stat.h>
 #endif
-
-#ifdef _MSC_VER
-#  define _CRT_SECURE_NO_DEPRECATE
-#endif
-#include <stdio.h>
 
 static inline void
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)

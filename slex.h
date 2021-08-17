@@ -173,25 +173,25 @@ enum lex_in
 
 enum lex_error
 {
-    OK, /* OK */
-    ERR_NOMEM, /* Out of memory */
-    ERR_BAD_CHARACTER, /* Char that should not appear in a file */
-    ERR_BAD_CHAR_LITERAL, /* Char literal other than 'x', '\x' or '\xxx' */
-    ERR_UNEXPECTED_COMMENT_END, /* Encoutered * / while not being in comment */
-    ERR_NEWLINE_IN_STRING, /* LF char without backslash in string */
-    ERR_EOF_AT_COMMENT, /* EOF without ending a comment */
-    ERR_EOF_AT_STRING, /* EOF without ending a string */
+    OK = 0, /* OK */
+    ERR_NOMEM = 1, /* Out of memory */
+    ERR_BAD_CHARACTER = 2, /* Char that should not appear in a file */
+    ERR_BAD_CHAR_LITERAL = 3, /* Char literal other than 'x', '\x' or '\xxx' */
+    ERR_UNEXPECTED_COMMENT_END = 4, /* Encoutered * / while not being in comment */
+    ERR_NEWLINE_IN_STRING = 5, /* LF char without backslash in string */
+    ERR_EOF_AT_COMMENT = 6, /* EOF without ending a comment */
+    ERR_EOF_AT_STRING = 7, /* EOF without ending a string */
 };
 
 char const* lex_error_str[] = {
-    [OK] = "OK",
-    [ERR_NOMEM] = "Out of memory",
-    [ERR_BAD_CHARACTER] = "Unexpected character in file",
-    [ERR_BAD_CHAR_LITERAL] = "Invalid character literal",
-    [ERR_UNEXPECTED_COMMENT_END] = "Unexpected comment end",
-    [ERR_NEWLINE_IN_STRING] = "Unescaped newline in string",
-    [ERR_EOF_AT_COMMENT] = "Unexpected EOF in comment",
-    [ERR_EOF_AT_STRING] = "Unexpected EOF in string",
+    "OK",
+    "Out of memory",
+    "Unexpected character in file",
+    "Invalid character literal",
+    "Unexpected comment end",
+    "Unescaped newline in string",
+    "Unexpected EOF in comment",
+    "Unexpected EOF in string",
 };
 
 enum token_type
@@ -290,8 +290,8 @@ lex_s(lex_state* state, void* user)
 
     while (p < string_end)
     {
-        __m256i b_1 = _mm256_loadu_si256((void*) p);
-        __m256i b_2 = _mm256_loadu_si256((void*) (p + sizeof(__m256i)));
+        __m256i b_1 = _mm256_loadu_si256((__m256i const*) p);
+        __m256i b_2 = _mm256_loadu_si256((__m256i const*) (p + sizeof(__m256i)));
 
         __m256i charmask_1 = _mm256_cmpgt_epi8(b_1, cmpmask_char_start);
         __m256i charmask_2 = _mm256_cmpgt_epi8(b_2, cmpmask_char_start);
@@ -527,7 +527,7 @@ lex_s(lex_state* state, void* user)
                         /* These are only set in this specific case */
                         state->in_string_line = str_start_line;
                         state->in_string_idx = str_start_idx;
-                        state->in_string_parsed = p - strstart;
+                        state->in_string_parsed = (i32)(p - strstart);
 
                         goto finalize;
                     }
@@ -623,7 +623,7 @@ lex_s(lex_state* state, void* user)
                 }
 
                 ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
-                u64 skip_mask = (1 << (skip_idx + 1)) - 2;
+                u64 skip_mask = (((u64) 1) << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
                     p += idx + skip_idx + 1;
@@ -735,8 +735,8 @@ repeat_nl_seek:
                         }
 
                         __m256i comment_end = _mm256_set1_epi16(MULTILINE_COMMENT_END);
-                        __m256i cb_1 = _mm256_loadu_si256((void*) p);
-                        __m256i cb_2 = _mm256_loadu_si256((void*) (p + 1));
+                        __m256i cb_1 = _mm256_loadu_si256((__m256i const*) p);
+                        __m256i cb_2 = _mm256_loadu_si256((__m256i const*) (p + 1));
                         __m256i cb_end_1 = _mm256_cmpeq_epi16(cb_1, comment_end);
                         __m256i cb_end_2 = _mm256_cmpeq_epi16(cb_2, comment_end);
                         __m256i cb_nl = _mm256_cmpeq_epi8(cb_1, cmpmask_newline);
@@ -882,7 +882,7 @@ lex(char const* string, isize len, void* user)
     state.curr_idx = 1;
     state.carry = CARRY_NONE;
 
-    char const* p;
+    char const* p = 0;
     char string_tail[64 * 2]; /* sizeof buffer + the same amount of whitespace */
     memset(string_tail, ' ', sizeof(string_tail));
 
