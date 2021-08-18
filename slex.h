@@ -521,13 +521,18 @@ lex_s(lex_state* state, void* user)
                     if (UNLIKELY(x >= string_end))
                     {
                         in = IN_STRING;
-                        p = x;
                         carry = CARRY_NONE;
-
+#if 0
+                        p = x;
                         /* These are only set in this specific case */
                         state->in_string_line = str_start_line;
                         state->in_string_idx = str_start_idx;
                         state->in_string_parsed = (i32)(p - strstart);
+#else
+                        p = strstart + 1;
+                        curr_line = str_start_line;
+                        curr_idx = str_start_idx;
+#endif
 
                         goto finalize;
                     }
@@ -871,10 +876,247 @@ err_newline_in_string:
     goto finalize;
 }
 
+#define IN_IDENT 4 // TODO:
+
+lex_result
+lex_small(char const* string, char const* string_end,
+          int in, int carry, i32 line, i32 idx, i32 carry_tok_len,
+          i32 more, void* user)
+{
+    char const* p = string;
+    char const* p_end = string_end;
+    int state = in;
+    int err = OK;
+    if (carry == CARRY_IDENT)
+    {
+        ASSERT(state == IN_NONE);
+        state = IN_IDENT;
+    }
+
+    switch (state) {
+    case IN_SHORT_COMMENT: goto in_short_comment;
+    case IN_LONG_COMMENT: goto in_long_comment;
+    case IN_STRING: goto in_string;
+    case IN_IDENT: goto in_ident;
+    default: break;
+    }
+
+    while (p < string_end)
+    {
+        while (p < string_end && (*p >= 9 && *p <= 13 && *p != '\n') || *p == ' ')
+        {
+            p++;
+            idx++;
+        }
+
+        char c = *p++;
+        if (UNLIKELY(c < 9) || (UNLIKELY(c > 13) && UNLIKELY(c < ' ')) || UNLIKELY(c == 127))
+        {
+            err = ERR_BAD_CHARACTER;
+            goto finalize;
+        }
+        else if (UNLIKELY(c == '\n'))
+        {
+            idx = 1;
+            line++;
+            continue;
+        }
+
+        more = 0;
+        carry_tok_len = 0;
+        u32 w = c;
+        if (p < string_end) w |= (*p << 8);
+        if (p + 1 < string_end) w |= (*(p + 1) << 16);
+        u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+        u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+        u32 w2 = w & 0xFFFF;
+        u32 w3 = w & 0xFFFFFF;
+
+        if (0 ALLOWED_TOK3)
+        {
+            ON_TOKEN_CB(p - 1, 3, T_OP, line, idx, user);
+            p += 3;
+            idx += 4;
+            continue;
+        }
+        else if (0 ALLOWED_TOK2)
+        {
+            ON_TOKEN_CB(p - 1, 2, T_OP, line, idx, user);
+            p += 2;
+            idx += 3;
+            continue;
+        }
+        else if (c == '"')
+        {
+            state = IN_STRING;
+            idx++;
+        }
+        else if ((w & single_comment_bmask) == SINGLELINE_COMMENT_START)
+        {
+            state = IN_SHORT_COMMENT;
+        }
+        else if ((w & multi_comment_bmask) == MULTILINE_COMMENT_START)
+        {
+            state = IN_LONG_COMMENT;
+        }
+        else if (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') || c == '_')
+        {
+            state = IN_IDENT;
+            carry_tok_len = 1;
+            idx++;
+        }
+        else
+        {
+            ON_TOKEN_CB(p - 1, 1, T_OP, line, idx, user);
+            idx++;
+            continue;
+        }
+
+        switch (state) {
+        case IN_STRING:
+in_string:
+        {
+            i32 in_string_line = line;
+            i32 in_string_idx = idx;
+            while (p < p_end && *p != '"')
+            {
+                if (UNLIKELY(*p == '\n'))
+                {
+                    if ((*(p - 1) != '\\' && (*(p - 1) != '\r' || *(p - 2) != '\\')))
+                    {
+                        err = ERR_NEWLINE_IN_STRING;
+                        goto finalize;
+                    }
+
+                    idx = 0;
+                    line++;
+                }
+
+                idx++;
+                p++;
+                more++;
+            }
+
+            if (UNLIKELY(p >= p_end))
+            {
+                err = ERR_EOF_AT_STRING;
+                goto finalize;
+            }
+
+            idx++;
+            p++;
+
+            ON_TOKEN_CB(p - more - 1, more,
+                        T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
+                        in_string_line, in_string_idx, user);
+        } break;
+        case IN_SHORT_COMMENT:
+in_short_comment:
+        {
+            while (p < p_end
+                   && (*p != '\n'
+                       || *(p - 1) == '\\'
+                       || (*(p - 1) == '\r' && *(p - 2) == '\\')))
+            {
+                if (UNLIKELY(*p == '\n'))
+                {
+                    line++;
+                    idx = 1;
+                }
+
+                idx++;
+                p++;
+            }
+
+            if (UNLIKELY(p >= p_end))
+            {
+                err = ERR_EOF_AT_COMMENT;
+                goto finalize;
+            }
+
+            line++;
+            idx = 1;
+            p++;
+            n_single_comments++;
+        } break;
+        case IN_LONG_COMMENT:
+in_long_comment:
+        {
+            u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
+            i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
+            while (p < p_end - nbytes
+                   &&  TOK_ANY(p, nbytes) != MULTILINE_COMMENT_END)
+            {
+                if (UNLIKELY(*p == '\n'))
+                {
+                    idx = 0;
+                    line++;
+                }
+
+                idx++;
+                p++;
+            }
+
+            if (UNLIKELY(p >= p_end - nbytes))
+            {
+                for (; p < p_end; ++p)
+                {
+                    if (*p == '\n')
+                    {
+                        line++;
+                        idx = 0;
+                    }
+
+                    idx++;
+                }
+
+                err = ERR_EOF_AT_COMMENT;
+                goto finalize;
+            }
+
+            idx += 2;
+            p += 2;
+            n_long_comments++;
+        } break;
+        case IN_IDENT:
+in_ident:
+        {
+            while (p < p_end
+                   && (('a' <= *p && *p <= 'z')
+                       || ('A' <= *p && *p <= 'Z')
+                       || ('0' <= *p && *p <= '9')
+                       || *p == '_'))
+            {
+                carry_tok_len++;
+                idx++;
+                p++;
+            }
+
+            char tok_start = *(p - carry_tok_len);
+            i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
+            ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, tok_type,
+                        line, idx - carry_tok_len, user);
+        } break;
+        default: NOTREACHED;
+        }
+    }
+
+finalize:
+    {
+        lex_result retval;
+        retval.err = err;
+        retval.curr_line = line;
+        retval.curr_idx = idx;
+
+        return retval;
+    }
+}
+
 lex_result
 lex(char const* string, isize len, void* user)
 {
     i32 err = OK;
+    i32 more = 0;
     lex_state state;
     state.string = string;
     state.string_end = string + len - 64;
@@ -883,9 +1125,6 @@ lex(char const* string, isize len, void* user)
     state.carry = CARRY_NONE;
 
     char const* p = 0;
-    char string_tail[64 * 2]; /* sizeof buffer + the same amount of whitespace */
-    memset(string_tail, ' ', sizeof(string_tail));
-
     if (LIKELY(len > 64))
     {
         err = lex_s(&state, user);
@@ -893,215 +1132,47 @@ lex(char const* string, isize len, void* user)
             goto finalize;
 
         p = state.out_at;
-        i32 offset = (i32) (p - state.string_end);
-        ASSERT(offset > 0);
-        memcpy(string_tail, state.string_end + offset, 64 - offset);
-        state.string = string_tail;
-        state.string_end = string_tail + 64 - offset;
+        switch (state.out_in) {
+        case IN_SHORT_COMMENT:
+        {
+            /* If previous frame ended with a '\': */
+            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
+            {
+                if ((*(p - 1) == '\\' && *p == '\n')
+                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
+                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
+                {
+                    i32 add = 1 + (*p == '\r');
+                    p += add;
+                    state.curr_idx = add;
+                    state.curr_line++;
+                }
+            }
+        } break;
+        default:
+        {
+        } break;
+        }
     }
     else if (len > 0)
     {
         /* Fixup state, because len turned out to be too small */
         state.out_at = string;
+        p = string;
         state.out_in = IN_NONE;
-        memcpy(string_tail, state.string, len);
-        state.string = string_tail;
-        state.string_end = string_tail + len;
     }
     else
     {
         goto finalize;
     }
 
-    if (UNLIKELY(state.out_in != IN_NONE))
-    {
-        switch (state.out_in) {
-        case IN_STRING:
-        {
-            i32 more = 0;
-
-            /* If previous frame ended with a '\': */
-            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
-            {
-                if ((*(p - 1) == '\\' && *p == '\n')
-                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
-                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
-                {
-                    i32 add = 1 + (*p == '\r');
-                    more += add;
-                    state.string += add;
-                    state.curr_idx = 1;
-                    state.curr_line++;
-                }
-            }
-
-            while (state.string < state.string_end && *state.string != '"')
-            {
-                if (UNLIKELY(*state.string == '\n'))
-                {
-                    if ((*(state.string - 1) != '\\'
-                         && (*(state.string - 1) != '\r' || *(state.string - 2) != '\\')))
-                    {
-                        err = ERR_NEWLINE_IN_STRING;
-                        goto finalize;
-                    }
-
-                    state.curr_idx = 0;
-                    state.curr_line++;
-                }
-
-                state.curr_idx++;
-                state.string++;
-                more++;
-            }
-
-            if (UNLIKELY(state.string >= state.string_end))
-            {
-                err = ERR_EOF_AT_STRING;
-                goto finalize;
-            }
-
-            state.curr_idx++;
-            state.string++;
-
-            ON_TOKEN_CB(p - state.in_string_parsed + 1, state.in_string_parsed + more - 1,
-                        T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
-                        state.in_string_line, state.in_string_idx, user);
-        } break;
-        case IN_SHORT_COMMENT:
-        {
-            /* If previous frame ended with a '\': */
-            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
-            {
-                if ((*(p - 1) == '\\' && *p == '\n')
-                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
-                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
-                {
-                    i32 add = 1 + (*p == '\r');
-                    state.string += add;
-                    state.curr_idx = add;
-                    state.curr_line++;
-                }
-            }
-
-            while (state.string < state.string_end
-                   && (*state.string != '\n'
-                       || *(state.string - 1) == '\\'
-                       || (*(state.string - 1) == '\r' && *(state.string - 2) == '\\')))
-            {
-                if (UNLIKELY(*state.string == '\n'))
-                {
-                    state.curr_line++;
-                    state.curr_idx = 1;
-                }
-
-                state.string++;
-            }
-
-            if (UNLIKELY(state.string >= state.string_end))
-            {
-                err = ERR_EOF_AT_COMMENT;
-                goto finalize;
-            }
-
-            state.curr_line++;
-            state.curr_idx = 1;
-            state.string++;
-            n_single_comments++;
-        } break;
-        case IN_LONG_COMMENT:
-        {
-            u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
-            i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
-            while (state.string < state.string_end - nbytes
-                   &&  TOK_ANY(state.string, nbytes) != MULTILINE_COMMENT_END)
-            {
-                if (UNLIKELY(*state.string == '\n'))
-                {
-                    state.curr_idx = 0;
-                    state.curr_line++;
-                }
-
-                state.curr_idx++;
-                state.string++;
-            }
-
-            if (UNLIKELY(state.string >= state.string_end - nbytes))
-            {
-                state.curr_idx += nbytes - 1;
-                err = ERR_EOF_AT_COMMENT;
-                goto finalize;
-            }
-
-            state.curr_idx += 2;
-            state.string += 2;
-            n_long_comments++;
-        } break;
-        default: NOTREACHED;
-        }
-    }
-    else if (state.carry == CARRY_IDENT)
-    {
-        i32 more = 0;
-        while (state.string < state.string_end
-               && (   ('a' <= *state.string && *state.string <= 'z')
-                   || ('A' <= *state.string && *state.string <= 'Z')
-                   || ('0' <= *state.string && *state.string <= '9')
-                   || *state.string == '_'))
-        {
-            more++;
-            state.curr_idx++;
-            state.string++;
-        }
-
-        char tok_start = *(p - state.carry_tok_len);
-        i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
-        state.carry = CARRY_NONE;
-        ON_TOKEN_CB(p - state.carry_tok_len, state.carry_tok_len + more, tok_type,
-                    state.curr_line, state.curr_idx - state.carry_tok_len - more,
-                    user);
-    }
-
 #if PRINT_LINES
     printf("----------------------------------------------------------------\n");
-    {
-        printf("|");
-        for (u32 i = 0; i < sizeof(string_tail); ++i)
-            printf("%d", i % 10);
-        printf("|\n|");
-        for (u32 i = 0; i < sizeof(string_tail); ++i)
-        {
-            if (string_tail[i] == '\n') printf(" ");
-            else if (!string_tail[i]) printf(" ");
-            else printf("%c", string_tail[i]);
-        }
-        printf("|\n");
-    }
 #endif
-
-    err = lex_s(&state, user);
-    p = state.out_at;
-    if (UNLIKELY(state.out_in != IN_NONE))
-    {
-        switch (state.out_in) {
-        case IN_STRING:
-        {
-            err = ERR_EOF_AT_STRING;
-            goto finalize;
-        } break;
-        case IN_SHORT_COMMENT:
-        {
-            err = ERR_EOF_AT_COMMENT;
-            goto finalize;
-        } break;
-        case IN_LONG_COMMENT:
-        {
-            err = ERR_EOF_AT_COMMENT;
-            goto finalize;
-        } break;
-        default: NOTREACHED;
-        }
-    }
+    return lex_small(p, string + len,
+                     state.out_in, state.carry,
+                     state.curr_line, state.curr_idx,
+                     state.carry_tok_len, more, user);
 
 finalize:
     {

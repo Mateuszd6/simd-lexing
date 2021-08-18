@@ -39,16 +39,13 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
 #define ON_TOKEN_CB tok_print
 
-
-/* TODO: Get rid of them! */
-#if 1
+/* TODO: Move them below the #include! */
 static long n_parsed_idents = 0;
 static long n_parsed_numbers = 0;
 static long n_parsed_strings = 0;
 static long n_parsed_chars = 0;
-static long n_single_comments = 0;
+static long n_single_comments = 0; /* TODO: Remove them at the end? */
 static long n_long_comments = 0;
-#endif
 
 #include "slex.h"
 
