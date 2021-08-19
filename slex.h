@@ -1,4 +1,6 @@
-/* TODO: Treat characters with first bit set as valid parts of identfier (utf8)
+/* TODO: NEXT: Save start line/idx/ptr for each str, comment etc. Don't bother
+ *       when we stop in the middle of the comment, just reparse it afterwards
+ * TODO: Treat characters with first bit set as valid parts of identfier (utf8)
  * TODO: However, probably verify if the unicode is correct (like in simdjson?)
  * TODO: Lexing floats properly
  * TODO: Add ability to add singlequote and backtick strings and maybe include
@@ -435,7 +437,7 @@ lex_s(lex_state* state, void* user)
             printf("|");
             for (int i = 0; i < 64; ++i)
             {
-                if (p[i] == '\n') printf(" ");
+                if (p[i] == '\n' || p[i] == '\t') printf(" ");
                 else if (!p[i]) printf(" ");
                 else printf("%c", p[i]);
             }
@@ -631,6 +633,7 @@ lex_s(lex_state* state, void* user)
                 u64 skip_mask = (((u64) 1) << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
+                    carry = CARRY_NONE;
                     p += idx + skip_idx + 1;
                     curr_idx += idx + skip_idx + 1;
                     goto continue_outer;
@@ -935,21 +938,67 @@ lex_small(char const* string, char const* string_end,
         if (0 ALLOWED_TOK3)
         {
             ON_TOKEN_CB(p - 1, 3, T_OP, line, idx, user);
-            p += 3;
-            idx += 4;
+            p += 2;
+            idx += 3;
             continue;
         }
         else if (0 ALLOWED_TOK2)
         {
             ON_TOKEN_CB(p - 1, 2, T_OP, line, idx, user);
-            p += 2;
-            idx += 3;
+            p += 1;
+            idx += 2;
             continue;
         }
         else if (c == '"')
         {
             state = IN_STRING;
             idx++;
+        }
+        else if (c == '\'')
+        {
+            char x[6]; // TODO: copypaste from "fast" code
+            int i = 0;
+            x[i++] = c;
+            for (; i < 6 && p + i < p_end; ++i)
+                x[i] = *(p + i - 1);
+
+            //
+            u64 skip_idx = 2;
+            if (x[1] == '\\')
+            {
+                if (LIKELY(x[3] == '\''))
+                {
+                    skip_idx = 3;
+                }
+                else
+                {
+                    /* Support three-num character literals ('\001') */
+                    skip_idx = 5;
+                    if (UNLIKELY(x[2] < '0')
+                        || UNLIKELY(x[3] < '0')
+                        || UNLIKELY(x[4] < '0')
+                        || UNLIKELY(x[2] > '9')
+                        || UNLIKELY(x[3] > '9')
+                        || UNLIKELY(x[4] > '9')
+                        || UNLIKELY(x[5] != '\'')
+                        /* Make sure val is < 256: */
+                        || UNLIKELY(x[2] >= '2' && x[3] >= '5' && x[4] > '6'))
+                    {
+                        err = ERR_BAD_CHAR_LITERAL;
+                        goto finalize;
+                    }
+                }
+            }
+            else if (UNLIKELY(x[2] != '\''))
+            {
+                err = ERR_BAD_CHAR_LITERAL;
+                goto finalize;
+            }
+
+            ON_TOKEN_CB(p, skip_idx - 1, T_CHAR, line, idx, user);
+            p += skip_idx;
+            idx += skip_idx + 1;
+            continue;
         }
         else if ((w & single_comment_bmask) == SINGLELINE_COMMENT_START)
         {
@@ -972,12 +1021,14 @@ lex_small(char const* string, char const* string_end,
             continue;
         }
 
+        /* TODO: Calculate backslashes in all of these! */
         switch (state) {
         case IN_STRING:
 in_string:
         {
             i32 in_string_line = line;
             i32 in_string_idx = idx;
+repeat_string_end_seek:
             while (p < p_end && *p != '"')
             {
                 if (UNLIKELY(*p == '\n'))
@@ -1001,6 +1052,19 @@ in_string:
             {
                 err = ERR_EOF_AT_STRING;
                 goto finalize;
+            }
+
+            ASSERT(*p == '"');
+            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
+            {
+                int bslashes = count_backslashes(p - 1);
+                if (bslashes & 1)
+                {
+                    more++;
+                    idx++;
+                    p++;
+                    goto repeat_string_end_seek;
+                }
             }
 
             idx++;
@@ -1030,6 +1094,7 @@ in_short_comment:
 
             if (UNLIKELY(p >= p_end))
             {
+                idx++;
                 err = ERR_EOF_AT_COMMENT;
                 goto finalize;
             }
@@ -1042,10 +1107,10 @@ in_short_comment:
         case IN_LONG_COMMENT:
 in_long_comment:
         {
+            idx++;
             u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
             i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
-            while (p < p_end - nbytes
-                   &&  TOK_ANY(p, nbytes) != MULTILINE_COMMENT_END)
+            while (p < p_end - nbytes && TOK_ANY(p, nbytes) != MULTILINE_COMMENT_END)
             {
                 if (UNLIKELY(*p == '\n'))
                 {
@@ -1125,7 +1190,7 @@ lex(char const* string, isize len, void* user)
     state.carry = CARRY_NONE;
 
     char const* p = 0;
-    if (LIKELY(len > 64))
+    if (1 && LIKELY(len > 64)) /* TODO: Remove 0/1 &&, add #ifdef simd ? */
     {
         err = lex_s(&state, user);
         if (UNLIKELY(err != OK))
