@@ -207,20 +207,15 @@ enum token_type
     T_BACKTICK_STR,
 };
 
-typedef struct lex_state lex_state;
-struct lex_state
+typedef struct lex_impl_result lex_impl_result;
+struct lex_impl_result
 {
-    char const* string;
-    char const* string_end;
+    char const* out_at;
+    i32 err;
     i32 curr_line;
     i32 curr_idx;
-    i32 carry;
+    i32 carry; // TODO: try to reduce?
     i32 carry_tok_len;
-    i32 out_in;
-    i32 in_string_line;
-    i32 in_string_idx;
-    i32 in_string_parsed;
-    char const* out_at;
 };
 
 typedef struct lex_result lex_result;
@@ -261,16 +256,14 @@ count_backslashes(char const* p)
     return backslashes;
 }
 
-static i32
-lex_s(lex_state* state, void* user)
+static lex_impl_result
+lex_s(char const* string, char const* string_end, void* user)
 {
-    char const* p = state->string;
-    char const* string_end = state->string_end;
-    i32 curr_line = state->curr_line;
-    i32 curr_idx = state->curr_idx;
-    i32 carry = state->carry;
-    i32 carry_tok_len = state->carry_tok_len;
-    i32 in = IN_NONE;
+    char const* p = string;
+    i32 curr_line = 1;
+    i32 curr_idx = 1;
+    i32 carry = CARRY_NONE;
+    i32 carry_tok_len = 0;
     i32 error = OK;
 
     __m256i cmpmask_0 = _mm256_set1_epi8('0' - 1);
@@ -291,6 +284,7 @@ lex_s(lex_state* state, void* user)
     __m256i stray_char_4 = _mm256_set1_epi8(127); /* DEL */
 
     while (p < string_end)
+continue_outer:
     {
         __m256i b_1 = _mm256_loadu_si256((__m256i const*) p);
         __m256i b_2 = _mm256_loadu_si256((__m256i const*) (p + sizeof(__m256i)));
@@ -522,7 +516,6 @@ lex_s(lex_state* state, void* user)
                 {
                     if (UNLIKELY(x >= string_end))
                     {
-                        in = IN_STRING;
                         carry = CARRY_NONE;
 #if 0
                         p = x;
@@ -531,9 +524,9 @@ lex_s(lex_state* state, void* user)
                         state->in_string_idx = str_start_idx;
                         state->in_string_parsed = (i32)(p - strstart);
 #else
-                        p = strstart + 1;
+                        p = strstart;
                         curr_line = str_start_line;
-                        curr_idx = str_start_idx;
+                        curr_idx = str_start_idx - 1;
 #endif
 
                         goto finalize;
@@ -671,12 +664,19 @@ lex_s(lex_state* state, void* user)
 
 skip_long:
                     p = x + 1;
+                    i32 comm_start_line = curr_line;
+                    i32 comm_start_idx = curr_idx + idx;
+                    char const* commstart = p - 1;
+
                     for (;; p += sizeof(__m256i))
                     {
                         if (UNLIKELY(p >= string_end))
                         {
-                            in = IN_SHORT_COMMENT;
                             carry = CARRY_NONE;
+                            p = commstart;
+                            curr_line = comm_start_line;
+                            curr_idx = comm_start_idx;
+
                             goto finalize;
                         }
 
@@ -733,12 +733,20 @@ repeat_nl_seek:
                 {
                     p = x + 2;
                     curr_idx += idx + 2;
+                    i32 comm_start_line = curr_line;
+                    i32 comm_start_idx = curr_idx - 2;
+                    char const* commstart = p - 2;
+
                     for (;; p += sizeof(__m256i))
                     {
                         if (UNLIKELY(p >= string_end))
                         {
-                            in = IN_LONG_COMMENT;
                             carry = CARRY_NONE;
+
+                            p = commstart;
+                            curr_line = comm_start_line;
+                            curr_idx = comm_start_idx;
+
                             goto finalize;
                         }
 
@@ -851,20 +859,21 @@ repeat_nl_seek:
 
         p += 64;
         curr_idx += 64;
-continue_outer:
-        (void) 0;
     }
 
 finalize:
-    /* Update state: */
-    state->curr_line = curr_line;
-    state->curr_idx = curr_idx;
-    state->carry = carry;
-    state->carry_tok_len = carry_tok_len;
-    state->out_in = in;
-    state->out_at = p;
+    {
+        /* Update state: */
+        lex_impl_result retval;
+        retval.out_at = p;
+        retval.err = error;
+        retval.curr_line = curr_line;
+        retval.curr_idx = curr_idx;
+        retval.carry = carry;
+        retval.carry_tok_len = carry_tok_len;
 
-    return error;
+        return retval;
+    }
 
 err_bad_character:
     error = ERR_BAD_CHARACTER;
@@ -883,25 +892,19 @@ err_newline_in_string:
 
 lex_result
 lex_small(char const* string, char const* string_end,
-          int in, int carry, i32 line, i32 idx, i32 carry_tok_len,
-          i32 more, void* user)
+          int carry, i32 line, i32 idx, i32 carry_tok_len,
+          void* user)
 {
+    u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+    u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
     char const* p = string;
     char const* p_end = string_end;
-    int state = in;
+    int state = IN_NONE;
     int err = OK;
     if (carry == CARRY_IDENT)
     {
-        ASSERT(state == IN_NONE);
         state = IN_IDENT;
-    }
-
-    switch (state) {
-    case IN_SHORT_COMMENT: goto in_short_comment;
-    case IN_LONG_COMMENT: goto in_long_comment;
-    case IN_STRING: goto in_string;
-    case IN_IDENT: goto in_ident;
-    default: break;
+        goto in_ident;
     }
 
     while (p < string_end)
@@ -925,13 +928,11 @@ lex_small(char const* string, char const* string_end,
             continue;
         }
 
-        more = 0;
+        i32 more = 0; /* TODO: Move them up, so that it compiles in c++ */
         carry_tok_len = 0;
         u32 w = c;
         if (p < string_end) w |= (*p << 8);
         if (p + 1 < string_end) w |= (*(p + 1) << 16);
-        u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
-        u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
         u32 w2 = w & 0xFFFF;
         u32 w3 = w & 0xFFFFFF;
 
@@ -956,13 +957,12 @@ lex_small(char const* string, char const* string_end,
         }
         else if (c == '\'')
         {
-            char x[6]; // TODO: copypaste from "fast" code
+            char x[6] = { 0, 0, 0, 0, 0, 0 }; // TODO: copypaste from "fast" code
             int i = 0;
             x[i++] = c;
             for (; i < 6 && p + i < p_end; ++i)
                 x[i] = *(p + i - 1);
 
-            //
             u64 skip_idx = 2;
             if (x[1] == '\\')
             {
@@ -1181,70 +1181,43 @@ lex_result
 lex(char const* string, isize len, void* user)
 {
     i32 err = OK;
-    i32 more = 0;
-    lex_state state;
-    state.string = string;
-    state.string_end = string + len - 64;
-    state.curr_line = 1;
-    state.curr_idx = 1;
-    state.carry = CARRY_NONE;
+    i32 curr_line = 1;
+    i32 curr_idx = 1;
+    i32 carry = CARRY_NONE;
+    i32 carry_tok_len = 0;
 
-    char const* p = 0;
-    if (1 && LIKELY(len > 64)) /* TODO: Remove 0/1 &&, add #ifdef simd ? */
+    char const* p = string;
+    if (LIKELY(len > 64)) /* TODO: Remove 0/1 &&, add #ifdef simd ? */
     {
-        err = lex_s(&state, user);
-        if (UNLIKELY(err != OK))
-            goto finalize;
+        lex_impl_result r = lex_s(string, string + len - 64, user);
+        p = r.out_at;
+        curr_line = r.curr_line;
+        curr_idx = r.curr_idx;
+        carry = r.carry;
+        carry_tok_len = r.carry_tok_len;
 
-        p = state.out_at;
-        switch (state.out_in) {
-        case IN_SHORT_COMMENT:
+        if (UNLIKELY(r.err != OK))
         {
-            /* If previous frame ended with a '\': */
-            if (UNLIKELY(*(p - 1) == '\\') || UNLIKELY(*(p - 2) == '\\'))
-            {
-                if ((*(p - 1) == '\\' && *p == '\n')
-                    || (*(p - 1) == '\\' && *p == '\r' && *(p + 1) == '\n')
-                    || (*(p - 2) == '\\' && *(p - 1) == '\r' && *p == '\n'))
-                {
-                    i32 add = 1 + (*p == '\r');
-                    p += add;
-                    state.curr_idx = add;
-                    state.curr_line++;
-                }
-            }
-        } break;
-        default:
-        {
-        } break;
+            err = r.err;
+            goto finalize;
         }
     }
-    else if (len > 0)
-    {
-        /* Fixup state, because len turned out to be too small */
-        state.out_at = string;
-        p = string;
-        state.out_in = IN_NONE;
-    }
-    else
-    {
-        goto finalize;
-    }
 
+
+    if (LIKELY(len > 0))
+    {
 #if PRINT_LINES
-    printf("----------------------------------------------------------------\n");
+        printf("----------------------------------------------------------------\n");
 #endif
-    return lex_small(p, string + len,
-                     state.out_in, state.carry,
-                     state.curr_line, state.curr_idx,
-                     state.carry_tok_len, more, user);
+        return lex_small(p, string + len, carry, curr_line, curr_idx, carry_tok_len, user);
+    }
 
 finalize:
     {
         lex_result retval;
         retval.err = err;
-        retval.curr_line = state.curr_line;
-        retval.curr_idx = state.curr_idx;
+        retval.curr_line = curr_line;
+        retval.curr_idx = curr_idx;
 
         return retval;
     }
