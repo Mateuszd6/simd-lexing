@@ -113,48 +113,61 @@ main(int argc, char** argv)
 
     char* fname = argv[1];
 
+#if PROFILE
+    for (int i = 0; i < 1024 * 32; ++i)
+#endif
+    {
 #if !(USE_MMAP)
-    FILE* f = fopen(fname, "rb");
-    if (UNLIKELY(!f))
-    {
-        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
-        exit(1);
-    }
+        FILE* f = fopen(fname, "rb");
+        if (UNLIKELY(!f))
+        {
+            fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
+            exit(1);
+        }
 
-    fseek(f, 0, SEEK_END);
-    isize fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* string = (char*) malloc(fsize);
-    fread(string, 1, fsize, f);
+        fseek(f, 0, SEEK_END);
+        isize fsize = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        char* string = (char*) malloc(fsize);
+        fread(string, 1, fsize, f);
 #else
-    int fd = open(fname, O_RDONLY);
-    if (UNLIKELY(fd == -1))
-    {
-        fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
-        exit(1);
-    }
+        int fd = open(fname, O_RDONLY);
+        if (UNLIKELY(fd == -1))
+        {
+            fprintf(stderr, "%s: error: Could not open file '%s' for reading\n", argv[0], fname);
+            exit(1);
+        }
 
-    struct stat st;
-    fstat(fd, &st); /* Get the size of the file. */ /* TODO: Check retval of stat and fail */
-    isize fsize = st.st_size;
-    char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
+        struct stat st;
+        fstat(fd, &st); /* Get the size of the file. */ /* TODO: Check retval of stat and fail */
+        isize fsize = st.st_size;
+        char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
-    lex_result r = lex(string, fsize, (void*) fname);
-    if (r.err != OK)
-    {
-        fprintf(stderr, "%s:%d:%d: error: %s\n",
-                fname, r.curr_line, r.curr_idx, lex_error_str[r.err]);
-        exit(1);
-    }
+        lex_result r = lex(string, fsize, (void*) fname);
+        if (r.err != OK)
+        {
+            fprintf(stderr, "%s:%d:%d: error: %s\n",
+                    fname, r.curr_line, r.curr_idx, lex_error_str[r.err]);
+            exit(1);
+        }
 
-    fprintf(stdout, "Parsed: "
-            "%d lines, %ld ids, %ld strings, "
-            "%ld chars, %ld ints, %ld hex,   %ld floats,    "
-            "%ld //s, %ld /**/s,   0 #foo\n",
-            r.curr_line, n_parsed_idents, n_parsed_strings,
-            n_parsed_chars, n_parsed_numbers, 0L, 0L,
-            n_single_comments, n_long_comments);
+#if !(USE_MMAP)
+        fclose(f);
+#else
+        munmap(string, fsize);
+#endif
+
+#ifndef PROFILE
+        fprintf(stdout, "Parsed: "
+                "%d lines, %ld ids, %ld strings, "
+                "%ld chars, %ld ints, %ld hex,   %ld floats,    "
+                "%ld //s, %ld /**/s,   0 #foo\n",
+                r.curr_line, n_parsed_idents, n_parsed_strings,
+                n_parsed_chars, n_parsed_numbers, 0L, 0L,
+                n_single_comments, n_long_comments);
+#endif
+    }
 
     return 0;
 }

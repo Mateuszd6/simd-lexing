@@ -21,7 +21,7 @@ coverage:
 
 profile:
 	${CC} ${CFLAGS} -g -O3                                                       \
-        -DRELEASE=1                                                              \
+        -DRELEASE=1 -DPROFILE=1                                                  \
         -march=native                                                            \
         -fstrict-aliasing                                                        \
         main.c -o main
