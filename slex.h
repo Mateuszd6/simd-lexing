@@ -171,6 +171,7 @@ enum lex_in
     IN_SHORT_COMMENT = 1,
     IN_LONG_COMMENT = 2,
     IN_STRING = 3,
+    IN_IDENT = 4,
 };
 
 enum lex_error
@@ -889,8 +890,6 @@ err_newline_in_string:
     error = ERR_NEWLINE_IN_STRING;
     goto finalize;
 }
-
-#define IN_IDENT 4 // TODO:
 
 lex_result
 lex_small(char const* string, char const* string_end,
