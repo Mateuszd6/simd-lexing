@@ -477,6 +477,9 @@ continue_outer:
                 continue;
             }
 
+            u32 w = U32_LOADU(x);
+            u32 w1 = w & 0xFF;
+
             if (idents_mmask & ((u64)1 << idx))
             {
                 ASSERT(x[0] == '_'
@@ -495,7 +498,7 @@ continue_outer:
                 /* If ident spans more than one buffer, will be reported later */
                 if (s || carry == CARRY_NONE)
                 {
-                    i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
+                    i32 tok_type = ('0' <= w1 && w1 <= '9') ? T_INTEGER : T_IDENT;
                     ON_TOKEN_CB(x, wsidx - idx, tok_type,
                                 curr_line, curr_idx + idx, user);
                 }
@@ -505,7 +508,7 @@ continue_outer:
                     carry_tok_len = wsidx - idx;
                 }
             }
-            else if (x[0] == '"')
+            else if (w1 == '"')
             {
                 curr_idx += idx + 1;
                 i32 str_start_line = curr_line;
@@ -588,7 +591,7 @@ continue_outer:
                     curr_idx += 32 - nl_offset;
                 }
             }
-            else if (x[0] == '\'')
+            else if (w1 == '\'')
             {
                 u64 skip_idx = 2;
                 if (x[1] == '\\')
@@ -639,7 +642,6 @@ continue_outer:
             {
                 u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
                 u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
-                u32 w = U32_LOADU(x);
                 u32 w2 = w & 0xFFFF;
                 u32 w3 = w & 0xFFFFFF;
 
