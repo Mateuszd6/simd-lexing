@@ -14,6 +14,8 @@
 #include <assert.h>
 #define ASSERT assert
 
+#include "timer.h"
+
 static inline void
 tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
@@ -113,9 +115,9 @@ main(int argc, char** argv)
 
     char* fname = argv[1];
 
-#if PROFILE
-    for (int i = 0; i < 1024 * 32; ++i)
-#endif
+#define REPEAT (32)
+    timer t = {0};
+    for (int i = 0; i < REPEAT; ++i)
     {
 #if !(USE_MMAP)
         FILE* f = fopen(fname, "rb");
@@ -144,7 +146,10 @@ main(int argc, char** argv)
         char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
+        TIMER_START(t);
         lex_result r = lex(string, fsize, (void*) fname);
+        TIMER_STOP(t);
+
         if (r.err != OK)
         {
             fprintf(stderr, "%s:%d:%d: error: %s\n",
@@ -158,7 +163,7 @@ main(int argc, char** argv)
         munmap(string, fsize);
 #endif
 
-#ifndef PROFILE
+#if 0
         fprintf(stdout, "Parsed: "
                 "%d lines, %ld ids, %ld strings, "
                 "%ld chars, %ld ints, %ld hex,   %ld floats,    "
@@ -169,5 +174,6 @@ main(int argc, char** argv)
 #endif
     }
 
+    fprintf(stdout, "Avg.: %.3fms\n", (float)t.elapsed / ((long)1000 * 1000 * REPEAT));
     return 0;
 }
