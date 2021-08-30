@@ -161,6 +161,7 @@ main(int argc, char** argv)
         fclose(f);
 #else
         munmap(string, fsize);
+        close(fd);
 #endif
 
 #if 0
