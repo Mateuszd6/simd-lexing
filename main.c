@@ -115,9 +115,11 @@ main(int argc, char** argv)
 
     char* fname = argv[1];
 
-#define REPEAT (32)
+#ifdef BENCH
+#  define REPEAT (32)
     timer t = {0};
     for (int i = 0; i < REPEAT; ++i)
+#endif
     {
 #if !(USE_MMAP)
         FILE* f = fopen(fname, "rb");
@@ -146,9 +148,13 @@ main(int argc, char** argv)
         char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
 
+#ifdef BENCH
         TIMER_START(t);
+#endif
         lex_result r = lex(string, fsize, (void*) fname);
+#ifdef BENCH
         TIMER_STOP(t);
+#endif
 
         if (r.err != OK)
         {
@@ -164,7 +170,7 @@ main(int argc, char** argv)
         close(fd);
 #endif
 
-#if 0
+#ifndef BENCH
         fprintf(stdout, "Parsed: "
                 "%d lines, %ld ids, %ld strings, "
                 "%ld chars, %ld ints, %ld hex,   %ld floats,    "
@@ -175,6 +181,8 @@ main(int argc, char** argv)
 #endif
     }
 
+#ifdef BENCH
     fprintf(stdout, "Avg.: %.3fms\n", (float)t.elapsed / ((long)1000 * 1000 * REPEAT));
+#endif
     return 0;
 }
