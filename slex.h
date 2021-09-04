@@ -459,11 +459,7 @@ continue_outer:
             char const* x = p + idx;
             s = (s & (s - 1));
 
-            /* Shift by idx + 1 is actually well defined, because if idx is 63, it means
-             * that s is 0 and we won't check the second condition */
-            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
-
-            if (UNLIKELY(stray_mmask) & ((u64)1 << idx))
+            if (UNLIKELY(stray_mmask & ((u64)1 << idx)))
             {
                 curr_idx += idx;
                 goto err_bad_character;
@@ -640,8 +636,12 @@ continue_outer:
             }
             else
             {
+                /* Case when idx = 63 is actually well defined, because it means
+                 * that s is 0 and we won't check the second condition */
+                u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
+
                 u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
-                u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+                u32 multi_comment_bmask = TOK_BYTEMASK(MULTILINE_COMMENT_START);
                 u32 w2 = w & 0xFFFF;
                 u32 w3 = w & 0xFFFFFF;
 

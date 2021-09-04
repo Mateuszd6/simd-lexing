@@ -1,8 +1,8 @@
 #ifndef TIMER_H_
 #define TIMER_H_
 
-#include <linux/time.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct timer timer;
 struct timer
