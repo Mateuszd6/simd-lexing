@@ -410,6 +410,27 @@ continue_outer:
 
                 char tok_start = *(p - carry_tok_len);
                 i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
+                if (tok_type == T_INTEGER && UNLIKELY(*(p + addidx) == '.'))
+                {
+                    /* TODO: Copypaste, do the same in "slow mode" */
+                    addidx++;
+                    for (;   ('0' <= *(p + addidx) && *(p + addidx) <= '9')
+                             || ('a' <= *(p + addidx) && *(p + addidx) <= 'z')
+                             || ('A' <= *(p + addidx) && *(p + addidx) <= 'Z')
+                             || *(p + addidx) == '.'; /* TODO: Handle the out-of-range */
+                         addidx++)
+                    {
+                        /* NOP */
+                    }
+
+                    ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                                curr_line, curr_idx - carry_tok_len, user);
+                    carry = CARRY_NONE;
+                    curr_idx += addidx;
+                    p += addidx;
+                    goto continue_outer;
+                }
+
                 ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
                             curr_line, curr_idx - carry_tok_len, user);
             }
