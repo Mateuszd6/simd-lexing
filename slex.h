@@ -498,8 +498,26 @@ continue_outer:
                 if (s || carry == CARRY_NONE)
                 {
                     i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
-                    ON_TOKEN_CB(x, wsidx - idx, tok_type,
-                                curr_line, curr_idx + idx, user);
+                    if (tok_type == T_INTEGER && UNLIKELY(x[wsidx - idx] == '.'))
+                    {
+                        wsidx++;
+                        for (;   ('0' <= x[wsidx - idx] && x[wsidx - idx] <= '9')
+                              || ('a' <= x[wsidx - idx] && x[wsidx - idx] <= 'z')
+                              || ('A' <= x[wsidx - idx] && x[wsidx - idx] <= 'Z')
+                              || x[wsidx - idx] == '.'; /* TODO: Handle the out-of-range */
+                             wsidx++)
+                        {
+                            /* NOP */
+                        }
+
+                        ON_TOKEN_CB(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
+                        carry = CARRY_NONE;
+                        curr_idx += wsidx;
+                        p = x + wsidx - idx;
+                        goto continue_outer;
+                    }
+
+                    ON_TOKEN_CB(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
                 }
                 else
                 {
