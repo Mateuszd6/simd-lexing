@@ -39,7 +39,10 @@
 #ifdef _MSC_VER
 #  include <intrin.h>
 #endif
-#include <immintrin.h>
+
+#ifdef __AVX2__ /* TODO: Check for Visual Studio */
+#  include <immintrin.h>
+#endif
 
 /* Intrinsics: */
 #if (defined(__GNUC__)) || (defined(__clang__))
@@ -214,7 +217,7 @@ struct lex_impl_result
     i32 err;
     i32 curr_line;
     i32 curr_idx;
-    i32 carry; // TODO: try to reduce?
+    i32 carry; /* TODO: try to reduce? */
     i32 carry_tok_len;
 };
 
@@ -238,12 +241,14 @@ union token_val
     /* TODO: T_FLOAT */
 };
 
+#ifdef __AVX2__
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
     __m256i mask = _mm256_permute2x128_si256(a, a, _MM_SHUFFLE(0, 0, 3, 0));
     return _mm256_alignr_epi8(a, mask, 16-1);
 }
+#endif
 
 static inline i32
 count_backslashes(char const* p)
@@ -256,6 +261,7 @@ count_backslashes(char const* p)
     return backslashes;
 }
 
+#ifdef __AVX2__
 static lex_impl_result
 lex_s(char const* string, char const* string_end, void* user)
 {
@@ -889,8 +895,9 @@ err_newline_in_string:
     error = ERR_NEWLINE_IN_STRING;
     goto finalize;
 }
+#endif /* __AVX2__ */
 
-#define IN_IDENT 4 // TODO:
+#define IN_IDENT 4 /* TODO: */
 
 lex_result
 lex_small(char const* string, char const* string_end,
@@ -959,7 +966,7 @@ lex_small(char const* string, char const* string_end,
         }
         else if (c == '\'')
         {
-            char x[6] = { 0, 0, 0, 0, 0, 0 }; // TODO: copypaste from "fast" code
+            char x[6] = { 0, 0, 0, 0, 0, 0 }; /* TODO: copypaste from "fast" code */
             int i = 0;
             x[i++] = c;
             for (; i < 6 && p + i < p_end; ++i)
@@ -1189,7 +1196,8 @@ lex(char const* string, isize len, void* user)
     i32 carry_tok_len = 0;
 
     char const* p = string;
-    if (LIKELY(len > 64)) /* #ifdef simd ? */
+#ifdef __AVX2__
+    if (LIKELY(len > 64))
     {
         lex_impl_result r = lex_s(string, string + len - 64, user);
         p = r.out_at;
@@ -1204,7 +1212,7 @@ lex(char const* string, isize len, void* user)
             goto finalize;
         }
     }
-
+#endif /* __AVX2__ */
 
     if (LIKELY(len > 0))
     {
