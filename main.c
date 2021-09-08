@@ -44,6 +44,7 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
 /* TODO: Move them below the #include! */
 static long n_parsed_idents = 0;
 static long n_parsed_numbers = 0;
+static long n_parsed_floats = 0;
 static long n_parsed_strings = 0;
 static long n_parsed_chars = 0;
 static long n_single_comments = 0; /* TODO: Remove them at the end? */
@@ -90,10 +91,11 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
     case T_OP:
     {
     } break;
+    */
     case T_FLOAT:
     {
+        n_parsed_floats++;
     } break;
-    */
     default:
     {
     } break;
@@ -116,7 +118,7 @@ main(int argc, char** argv)
     char* fname = argv[1];
 
 #ifdef BENCH
-#  define REPEAT (32)
+#  define REPEAT (128)
     timer t = {0};
     for (int i = 0; i < REPEAT; ++i)
 #endif
@@ -176,7 +178,7 @@ main(int argc, char** argv)
                 "%ld chars, %ld ints, %ld hex,   %ld floats,    "
                 "%ld //s, %ld /**/s,   0 #foo\n",
                 r.curr_line, n_parsed_idents, n_parsed_strings,
-                n_parsed_chars, n_parsed_numbers, 0L, 0L,
+                n_parsed_chars, n_parsed_numbers, 0L, n_parsed_floats,
                 n_single_comments, n_long_comments);
 #endif
     }

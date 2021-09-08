@@ -238,7 +238,7 @@ union token_val
     char* str;
     u32 op;
     u32 ch;
-    /* TODO: T_FLOAT */
+    double floating;
 };
 
 #ifdef __AVX2__
@@ -423,7 +423,7 @@ continue_outer:
                         /* NOP */
                     }
 
-                    ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                    ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, T_FLOAT,
                                 curr_line, curr_idx - carry_tok_len, user);
                     carry = CARRY_NONE;
                     curr_idx += addidx;
@@ -531,7 +531,7 @@ continue_outer:
                             /* NOP */
                         }
 
-                        ON_TOKEN_CB(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
+                        ON_TOKEN_CB(x, wsidx - idx, T_FLOAT, curr_line, curr_idx + idx, user);
                         carry = CARRY_NONE;
                         curr_idx += wsidx;
                         p = x + wsidx - idx;
@@ -1207,8 +1207,24 @@ in_ident:
 
             char tok_start = *(p - carry_tok_len);
             i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
-            ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, tok_type,
-                        line, idx - carry_tok_len, user);
+            if (tok_type == T_INTEGER && UNLIKELY(*p == '.'))
+            {
+                p++;
+                idx++;
+                carry_tok_len++;
+                for (; p < p_end && (('0' <= *p && *p <= '9') || ('a' <= *p && *p <= 'z') || ('A' <= *p && *p <= 'Z') || *p == '.'); carry_tok_len++, idx++, p++)
+                {
+                    /* NOP */
+                }
+
+                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, T_FLOAT, line, idx - carry_tok_len, user);
+                carry = CARRY_NONE;
+            }
+            else
+            {
+                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, tok_type,
+                            line, idx - carry_tok_len, user);
+            }
         } break;
         default: NOTREACHED;
         }
