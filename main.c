@@ -52,12 +52,6 @@ static long n_long_comments = 0;
 
 #include "slex.h"
 
-#if USE_MMAP
-#  include <fcntl.h>
-#  include <sys/mman.h>
-#  include <sys/stat.h>
-#endif
-
 static inline void
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 {
@@ -79,7 +73,6 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
         n_parsed_numbers++;
     } break;
     case T_DOUBLEQ_STR:
-    case T_BACKTICK_STR:
     {
         n_parsed_strings++;
     } break;
@@ -105,6 +98,13 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
     printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
 #endif
 }
+
+#if USE_MMAP
+#  include <fcntl.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 int
 main(int argc, char** argv)

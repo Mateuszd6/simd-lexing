@@ -1,7 +1,7 @@
 .PHONY: all debug coverage profile release validate snapshot clear
 
 CC=gcc
-CFLAGS=--std=gnu99 -pedantic -Wextra -Wshadow -Wno-unused-function
+CFLAGS=--std=gnu99 -pedantic -Wall -Wextra -Wshadow -Wno-unused-function
 
 all: debug
 

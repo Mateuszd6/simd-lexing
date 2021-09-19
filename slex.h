@@ -1,8 +1,5 @@
-/* TODO: NEXT: Save start line/idx/ptr for each str, comment etc. Don't bother
- *       when we stop in the middle of the comment, just reparse it afterwards
- * TODO: Treat characters with first bit set as valid parts of identfier (utf8)
- * TODO: However, probably verify if the unicode is correct (like in simdjson?)
- * TODO: Lexing floats properly
+/* TODO: However, probably verify if the unicode is correct (like in simdjson?)
+ * TODO: Lexing float better in SIMD code (can be way faster!)
  * TODO: Add ability to add singlequote and backtick strings and maybe include
  *       dollars and single quotes in the ident
  * TODO: Prefix the API!
@@ -207,7 +204,6 @@ enum token_type
     T_FLOAT,
     T_CHAR,
     T_DOUBLEQ_STR,
-    T_BACKTICK_STR,
 };
 
 typedef struct lex_impl_result lex_impl_result;
@@ -281,7 +277,6 @@ lex_s(char const* string, char const* string_end, void* user)
     __m256i cmpmask_underscore = _mm256_set1_epi8('_');
     __m256i cmpmask_newline = _mm256_set1_epi8('\n');
     __m256i cmpmask_doublequote = _mm256_set1_epi8('"');
-    __m256i cmpmask_backtick = _mm256_set1_epi8('`');
     __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); /* space - 1 */
 
     __m256i stray_char_1 = _mm256_set1_epi8(9); /* HT */
@@ -957,7 +952,7 @@ lex_small(char const* string, char const* string_end,
 
     while (p < string_end)
     {
-        while (p < string_end && (*p >= 9 && *p <= 13 && *p != '\n') || *p == ' ')
+        while (p < string_end && ((*p >= 9 && *p <= 13 && *p != '\n') || *p == ' '))
         {
             p++;
             idx++;
@@ -1072,7 +1067,6 @@ lex_small(char const* string, char const* string_end,
         /* TODO: Calculate backslashes in all of these! */
         switch (state) {
         case IN_STRING:
-in_string:
         {
             i32 in_string_line = line;
             i32 in_string_idx = idx;
@@ -1123,7 +1117,6 @@ repeat_string_end_seek:
                         in_string_line, in_string_idx, user);
         } break;
         case IN_SHORT_COMMENT:
-in_short_comment:
         {
             while (p < p_end
                    && (*p != '\n'
@@ -1153,10 +1146,8 @@ in_short_comment:
             n_single_comments++;
         } break;
         case IN_LONG_COMMENT:
-in_long_comment:
         {
             idx++;
-            u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
             i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
             while (p < p_end - nbytes && TOK_ANY(p, nbytes) != MULTILINE_COMMENT_END)
             {
