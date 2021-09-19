@@ -9,7 +9,7 @@ fi
 rm -rf ./cov/
 mkdir -p ./cov/
 
-for f in ./tests/*.c; do
+for f in ../tests/*.c; do
     ./main $f > "mine.out" 2> "mine.err"
     ERROR_CODE=$?
 
@@ -33,7 +33,7 @@ for f in ./tests/*.c; do
     if [ $SNAPSHOT -eq 1 ]; then
         echo "SNAPSHOTTED"
 
-        mkdir -p "./tests/"
+        mkdir -p "../tests/"
         mv ./mine.out "${f}.out"
         mv ./mine.err "${f}.err"
     else

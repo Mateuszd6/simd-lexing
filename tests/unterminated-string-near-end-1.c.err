@@ -1,1 +1,1 @@
-./tests/unterminated-string-near-end-1.c:23:179: error: Unexpected EOF in string
+../tests/unterminated-string-near-end-1.c:23:179: error: Unexpected EOF in string

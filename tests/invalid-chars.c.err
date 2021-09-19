@@ -1,1 +1,1 @@
-./tests/invalid-chars.c:16:15: error: Invalid character literal
+../tests/invalid-chars.c:16:15: error: Invalid character literal

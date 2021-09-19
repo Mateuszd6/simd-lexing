@@ -106,6 +106,8 @@ lex_data_push_token(lex_data* data, token t)
     data->p[data->len++] = t;
 }
 
+// This can be adjusted so that you have more control over what is parsed and how.
+// Returning other value than 0 means an error and lexing is aborted.
 static inline int
 on_token_cb(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 {
@@ -230,7 +232,21 @@ main(int argc, char** argv)
 
     //
     // ld.p has ld.len tokens to use. You must free ld.p when done
+    // Just a single example:
     //
+    for (ptrdiff_t i = 0; i < ld.len; ++i)
+    {
+        char* type_name = 0;
+        switch (ld.p[i].type) {
+        case T_IDENT: type_name = "ident"; break;
+        case T_OP: type_name = "operator"; break;
+        case T_INTEGER: type_name = "integer"; break;
+        case T_FLOAT: type_name = "float"; break;
+        case T_CHAR: type_name = "char"; break;
+        case T_DOUBLEQ_STR: type_name = "string"; break;
+        }
+        printf("%s:%d:%d: %s\n", fname, ld.p[i].line, ld.p[i].idx, type_name);
+    }
 
     free(ld.p);
     free(string);

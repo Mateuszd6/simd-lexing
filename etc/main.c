@@ -50,7 +50,7 @@ static long n_parsed_chars = 0;
 static long n_single_comments = 0; /* TODO: Remove them at the end? */
 static long n_long_comments = 0;
 
-#include "slex.h"
+#include "../slex.h"
 
 static inline int
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)

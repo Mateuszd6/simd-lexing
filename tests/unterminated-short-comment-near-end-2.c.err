@@ -1,1 +1,1 @@
-./tests/unterminated-short-comment-near-end-2.c:23:186: error: Unexpected EOF in comment
+../tests/unterminated-short-comment-near-end-2.c:23:186: error: Unexpected EOF in comment

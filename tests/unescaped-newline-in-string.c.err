@@ -1,1 +1,1 @@
-./tests/unescaped-newline-in-string.c:12:54: error: Unescaped newline in string
+../tests/unescaped-newline-in-string.c:12:54: error: Unescaped newline in string
