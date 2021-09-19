@@ -1,7 +1,7 @@
 .PHONY: all debug coverage profile release validate snapshot clear
 
 CC=gcc
-CFLAGS=--std=c99 -pedantic -Wextra -Wshadow -Wno-unused-function
+CFLAGS=--std=gnu99 -pedantic -Wall -Wextra -Wshadow -Wno-unused-function
 
 all: debug
 
@@ -21,7 +21,7 @@ coverage:
 
 profile:
 	${CC} ${CFLAGS} -g -O3                                                       \
-        -DRELEASE=1                                                              \
+        -DRELEASE=1 -DPROFILE=1 -DBENCH=1                                        \
         -march=native                                                            \
         -fstrict-aliasing                                                        \
         main.c -o main
@@ -29,7 +29,7 @@ profile:
 
 release:
 	${CC} ${CFLAGS} -O3                                                          \
-        -DRELEASE=1                                                              \
+        -DRELEASE=1 -DBENCH=1                                                    \
         -march=native                                                            \
         -fstrict-aliasing                                                        \
         main.c -o main

@@ -1,10 +1,8 @@
-/* TODO: NEXT: Save start line/idx/ptr for each str, comment etc. Don't bother
- *       when we stop in the middle of the comment, just reparse it afterwards
- * TODO: Treat characters with first bit set as valid parts of identfier (utf8)
- * TODO: However, probably verify if the unicode is correct (like in simdjson?)
- * TODO: Lexing floats properly
+/* TODO: However, probably verify if the unicode is correct (like in simdjson?)
+ * TODO: Lexing float better in SIMD code (can be way faster!)
+ * TODO: Use simd when advancing over floats
  * TODO: Add ability to add singlequote and backtick strings and maybe include
- *       dollars and single quotes in the ident
+ *       dollars and single quotes in the ident?
  * TODO: Prefix the API!
  */
 
@@ -39,7 +37,10 @@
 #ifdef _MSC_VER
 #  include <intrin.h>
 #endif
-#include <immintrin.h>
+
+#ifdef __AVX2__ /* TODO: Check for Visual Studio */
+#  include <immintrin.h>
+#endif
 
 /* Intrinsics: */
 #if (defined(__GNUC__)) || (defined(__clang__))
@@ -159,6 +160,13 @@ typedef ptrdiff_t isize;
 #define TOK_BYTEMASK(X) ((X) < (1 << 8) ? 0xFF : ((X) < (1 << 16) ? 0xFFFF : 0xFFFFFF))
 #define TOK_NBYTES(X) ((X) < (1 << 8) ? 1 : ((X) < (1 << 16) ? 2 : 3))
 
+#define CALL_USER(STR, LEN, TYPE, LINE, IDX, USER)                             \
+    do {                                                                       \
+        int user_error = ON_TOKEN_CB(STR, LEN, TYPE, LINE, IDX, USER);         \
+        if (UNLIKELY(user_error) != 0)                                         \
+            goto err_user;                                                     \
+    } while (0)
+
 enum carry
 {
     CARRY_NONE = 0,
@@ -184,6 +192,7 @@ enum lex_error
     ERR_NEWLINE_IN_STRING = 5, /* LF char without backslash in string */
     ERR_EOF_AT_COMMENT = 6, /* EOF without ending a comment */
     ERR_EOF_AT_STRING = 7, /* EOF without ending a string */
+    ERR_USER = 8, /* Error in user callback */
 };
 
 char const* lex_error_str[] = {
@@ -205,7 +214,6 @@ enum token_type
     T_FLOAT,
     T_CHAR,
     T_DOUBLEQ_STR,
-    T_BACKTICK_STR,
 };
 
 typedef struct lex_impl_result lex_impl_result;
@@ -215,7 +223,7 @@ struct lex_impl_result
     i32 err;
     i32 curr_line;
     i32 curr_idx;
-    i32 carry; // TODO: try to reduce?
+    i32 carry; /* TODO: try to reduce? */
     i32 carry_tok_len;
 };
 
@@ -236,15 +244,17 @@ union token_val
     char* str;
     u32 op;
     u32 ch;
-    /* TODO: T_FLOAT */
+    double floating;
 };
 
+#ifdef __AVX2__
 static inline __m256i
 mm_ext_shl8_si256(__m256i a)
 {
     __m256i mask = _mm256_permute2x128_si256(a, a, _MM_SHUFFLE(0, 0, 3, 0));
     return _mm256_alignr_epi8(a, mask, 16-1);
 }
+#endif
 
 static inline i32
 count_backslashes(char const* p)
@@ -257,6 +267,7 @@ count_backslashes(char const* p)
     return backslashes;
 }
 
+#ifdef __AVX2__
 static lex_impl_result
 lex_s(char const* string, char const* string_end, void* user)
 {
@@ -276,7 +287,6 @@ lex_s(char const* string, char const* string_end, void* user)
     __m256i cmpmask_underscore = _mm256_set1_epi8('_');
     __m256i cmpmask_newline = _mm256_set1_epi8('\n');
     __m256i cmpmask_doublequote = _mm256_set1_epi8('"');
-    __m256i cmpmask_backtick = _mm256_set1_epi8('`');
     __m256i cmpmask_char_start = _mm256_set1_epi8(0x20); /* space - 1 */
 
     __m256i stray_char_1 = _mm256_set1_epi8(9); /* HT */
@@ -284,8 +294,8 @@ lex_s(char const* string, char const* string_end, void* user)
     __m256i stray_char_3 = _mm256_set1_epi8(' ');
     __m256i stray_char_4 = _mm256_set1_epi8(127); /* DEL */
 
-    while (p < string_end)
 continue_outer:
+    while (p < string_end)
     {
         __m256i b_1 = _mm256_loadu_si256((__m256i const*) p);
         __m256i b_2 = _mm256_loadu_si256((__m256i const*) (p + sizeof(__m256i)));
@@ -405,7 +415,37 @@ continue_outer:
 
                 char tok_start = *(p - carry_tok_len);
                 i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
-                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                if (tok_type == T_INTEGER && UNLIKELY(*(p + addidx) == '.'))
+                {
+                    /* TODO: Copypaste, do the same in "slow mode" */
+                    addidx++;
+                    for (; p - carry_tok_len + addidx < string_end
+                             && (('0' <= *(p + addidx) && *(p + addidx) <= '9')
+                                 || ('a' <= *(p + addidx) && *(p + addidx) <= 'z')
+                                 || ('A' <= *(p + addidx) && *(p + addidx) <= 'Z')
+                                 || *(p + addidx) == '.');
+                         addidx++)
+                    {
+                        /* NOP */
+                    }
+
+                    if (UNLIKELY(p - carry_tok_len + addidx >= string_end))
+                    {
+                        p -= carry_tok_len;
+
+                        /* Will break out of the loop and will be reported in the "slow" */
+                        goto continue_outer;
+                    }
+
+                    CALL_USER(p - carry_tok_len, carry_tok_len + addidx, T_FLOAT,
+                                curr_line, curr_idx - carry_tok_len, user);
+                    carry = CARRY_NONE;
+                    curr_idx += addidx;
+                    p += addidx;
+                    goto continue_outer;
+                }
+
+                CALL_USER(p - carry_tok_len, carry_tok_len + addidx, tok_type,
                             curr_line, curr_idx - carry_tok_len, user);
             }
             else
@@ -460,11 +500,7 @@ continue_outer:
             char const* x = p + idx;
             s = (s & (s - 1));
 
-            /* Shift by idx + 1 is actually well defined, because if idx is 63, it means
-             * that s is 0 and we won't check the second condition */
-            u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
-
-            if (UNLIKELY(stray_mmask) & ((u64)1 << idx))
+            if (UNLIKELY(stray_mmask & ((u64)1 << idx)))
             {
                 curr_idx += idx;
                 goto err_bad_character;
@@ -477,9 +513,6 @@ continue_outer:
 
                 continue;
             }
-
-            u32 w = U32_LOADU(x);
-            u32 w1 = w & 0xFF;
 
             if (idents_mmask & ((u64)1 << idx))
             {
@@ -499,9 +532,39 @@ continue_outer:
                 /* If ident spans more than one buffer, will be reported later */
                 if (s || carry == CARRY_NONE)
                 {
-                    i32 tok_type = ('0' <= w1 && w1 <= '9') ? T_INTEGER : T_IDENT;
-                    ON_TOKEN_CB(x, wsidx - idx, tok_type,
-                                curr_line, curr_idx + idx, user);
+                    i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
+                    if (tok_type == T_INTEGER && UNLIKELY(x[wsidx - idx] == '.'))
+                    {
+                        i32 old_wsidx = wsidx++;
+                        for (; x + wsidx - idx < string_end
+                                 && (('0' <= x[wsidx - idx] && x[wsidx - idx] <= '9')
+                                     || ('a' <= x[wsidx - idx] && x[wsidx - idx] <= 'z')
+                                     || ('A' <= x[wsidx - idx] && x[wsidx - idx] <= 'Z')
+                                     || x[wsidx - idx] == '.');
+                             wsidx++)
+                        {
+                            /* NOP */
+                        }
+
+                        if (UNLIKELY(x + wsidx - idx >= string_end))
+                        {
+                            /* TODO: Make sure these are calculated properly! */
+                            carry = CARRY_NONE;
+                            curr_idx += old_wsidx;
+                            p = x;
+
+                            /* Will break out of the loop and will be reported in the "slow" */
+                            goto continue_outer;
+                        }
+
+                        CALL_USER(x, wsidx - idx, T_FLOAT, curr_line, curr_idx + idx, user);
+                        carry = CARRY_NONE;
+                        curr_idx += wsidx;
+                        p = x + wsidx - idx;
+                        goto continue_outer;
+                    }
+
+                    CALL_USER(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
                 }
                 else
                 {
@@ -509,7 +572,7 @@ continue_outer:
                     carry_tok_len = wsidx - idx;
                 }
             }
-            else if (w1 == '"')
+            else if (x[0] == '"')
             {
                 curr_idx += idx + 1;
                 i32 str_start_line = curr_line;
@@ -548,7 +611,7 @@ continue_outer:
                         i32 mask_idx = mask ? ctz32(mask) : 32;
                         if (LIKELY(nb_mm & ((u32)1 << mask_idx)))
                         {
-                            /* Doubleqote, check if backslashed */
+                            /* Doublequote, check if backslashed */
                             if (UNLIKELY(x[mask_idx - 1] == '\\')
                                 || UNLIKELY(x[mask_idx - 2] == '\\'))
                             {
@@ -561,7 +624,7 @@ continue_outer:
                             }
 
                             p = x + mask_idx + 1;
-                            ON_TOKEN_CB(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
+                            CALL_USER(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
                                         str_start_line, str_start_idx, user);
                             curr_idx += mask_idx + 1 - nl_offset;
                             carry = CARRY_NONE;
@@ -592,7 +655,7 @@ continue_outer:
                     curr_idx += 32 - nl_offset;
                 }
             }
-            else if (w1 == '\'')
+            else if (x[0] == '\'')
             {
                 u64 skip_idx = 2;
                 if (x[1] == '\\')
@@ -626,7 +689,7 @@ continue_outer:
                     goto err_bad_char_literal;
                 }
 
-                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
+                CALL_USER(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
                 u64 skip_mask = (((u64) 1) << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
@@ -641,8 +704,15 @@ continue_outer:
             }
             else
             {
+                /* Case when idx = 63 is actually well defined, because it means
+                 * that s is 0 and we won't check the second condition */
+                u64 size_ge_2 = !s || (s & ((u64)1 << (idx + 1)));
+
                 u32 single_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
-                u32 multi_comment_bmask = TOK_BYTEMASK(SINGLELINE_COMMENT_START);
+                u32 multi_comment_bmask = TOK_BYTEMASK(MULTILINE_COMMENT_START);
+
+                u32 w = U32_LOADU(x);
+                u32 w1 = w & 0xFF;
                 u32 w2 = w & 0xFFFF;
                 u32 w3 = w & 0xFFFFFF;
 
@@ -824,7 +894,7 @@ repeat_nl_seek:
                 {
                     if (0 ALLOWED_TOK3)
                     {
-                        ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_idx + idx, user);
+                        CALL_USER(x, 3, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 2;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -840,7 +910,7 @@ repeat_nl_seek:
                     }
                     else if (0 ALLOWED_TOK2)
                     {
-                        ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_idx + idx, user);
+                        CALL_USER(x, 2, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 1;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -856,7 +926,7 @@ repeat_nl_seek:
                     }
                 }
 
-                ON_TOKEN_CB(x, 1, T_OP, curr_line, curr_idx + idx, user);
+                CALL_USER(x, 1, T_OP, curr_line, curr_idx + idx, user);
             }
         }
 
@@ -889,7 +959,12 @@ err_bad_char_literal:
 err_newline_in_string:
     error = ERR_NEWLINE_IN_STRING;
     goto finalize;
+
+err_user:
+    error = ERR_USER;
+    goto finalize;
 }
+#endif /* __AVX2__ */
 
 lex_result
 lex_small(char const* string, char const* string_end,
@@ -910,7 +985,7 @@ lex_small(char const* string, char const* string_end,
 
     while (p < string_end)
     {
-        while (p < string_end && (*p >= 9 && *p <= 13 && *p != '\n') || *p == ' ')
+        while (p < string_end && ((*p >= 9 && *p <= 13 && *p != '\n') || *p == ' '))
         {
             p++;
             idx++;
@@ -939,14 +1014,14 @@ lex_small(char const* string, char const* string_end,
 
         if (0 ALLOWED_TOK3)
         {
-            ON_TOKEN_CB(p - 1, 3, T_OP, line, idx, user);
+            CALL_USER(p - 1, 3, T_OP, line, idx, user);
             p += 2;
             idx += 3;
             continue;
         }
         else if (0 ALLOWED_TOK2)
         {
-            ON_TOKEN_CB(p - 1, 2, T_OP, line, idx, user);
+            CALL_USER(p - 1, 2, T_OP, line, idx, user);
             p += 1;
             idx += 2;
             continue;
@@ -958,7 +1033,7 @@ lex_small(char const* string, char const* string_end,
         }
         else if (c == '\'')
         {
-            char x[6] = { 0, 0, 0, 0, 0, 0 }; // TODO: copypaste from "fast" code
+            char x[6] = { 0, 0, 0, 0, 0, 0 }; /* TODO: copypaste from "fast" code */
             int i = 0;
             x[i++] = c;
             for (; i < 6 && p + i < p_end; ++i)
@@ -996,7 +1071,7 @@ lex_small(char const* string, char const* string_end,
                 goto finalize;
             }
 
-            ON_TOKEN_CB(p, skip_idx - 1, T_CHAR, line, idx, user);
+            CALL_USER(p, skip_idx - 1, T_CHAR, line, idx, user);
             p += skip_idx;
             idx += skip_idx + 1;
             continue;
@@ -1017,7 +1092,7 @@ lex_small(char const* string, char const* string_end,
         }
         else
         {
-            ON_TOKEN_CB(p - 1, 1, T_OP, line, idx, user);
+            CALL_USER(p - 1, 1, T_OP, line, idx, user);
             idx++;
             continue;
         }
@@ -1025,7 +1100,6 @@ lex_small(char const* string, char const* string_end,
         /* TODO: Calculate backslashes in all of these! */
         switch (state) {
         case IN_STRING:
-in_string:
         {
             i32 in_string_line = line;
             i32 in_string_idx = idx;
@@ -1071,12 +1145,11 @@ repeat_string_end_seek:
             idx++;
             p++;
 
-            ON_TOKEN_CB(p - more - 1, more,
-                        T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
-                        in_string_line, in_string_idx, user);
+            CALL_USER(p - more - 1, more,
+                      T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
+                      in_string_line, in_string_idx, user);
         } break;
         case IN_SHORT_COMMENT:
-in_short_comment:
         {
             while (p < p_end
                    && (*p != '\n'
@@ -1106,10 +1179,8 @@ in_short_comment:
             n_single_comments++;
         } break;
         case IN_LONG_COMMENT:
-in_long_comment:
         {
             idx++;
-            u32 bytemask = TOK_BYTEMASK(MULTILINE_COMMENT_END);
             i32 nbytes = TOK_NBYTES(MULTILINE_COMMENT_END);
             while (p < p_end - nbytes && TOK_ANY(p, nbytes) != MULTILINE_COMMENT_END)
             {
@@ -1160,8 +1231,24 @@ in_ident:
 
             char tok_start = *(p - carry_tok_len);
             i32 tok_type = ('0' <= tok_start && tok_start <= '9') ? T_INTEGER : T_IDENT;
-            ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, tok_type,
-                        line, idx - carry_tok_len, user);
+            if (tok_type == T_INTEGER && UNLIKELY(*p == '.'))
+            {
+                p++;
+                idx++;
+                carry_tok_len++;
+                for (; p < p_end && (('0' <= *p && *p <= '9') || ('a' <= *p && *p <= 'z') || ('A' <= *p && *p <= 'Z') || *p == '.'); carry_tok_len++, idx++, p++)
+                {
+                    /* NOP */
+                }
+
+                CALL_USER(p - carry_tok_len, carry_tok_len, T_FLOAT, line, idx - carry_tok_len, user);
+                carry = CARRY_NONE;
+            }
+            else
+            {
+                CALL_USER(p - carry_tok_len, carry_tok_len, tok_type,
+                          line, idx - carry_tok_len, user);
+            }
         } break;
         default: NOTREACHED;
         }
@@ -1176,6 +1263,10 @@ finalize:
 
         return retval;
     }
+
+err_user:
+    err = ERR_USER;
+    goto finalize;
 }
 
 lex_result
@@ -1188,7 +1279,8 @@ lex(char const* string, isize len, void* user)
     i32 carry_tok_len = 0;
 
     char const* p = string;
-    if (LIKELY(len > 64)) /* TODO: Remove 0/1 &&, add #ifdef simd ? */
+#ifdef __AVX2__
+    if (LIKELY(len > 64))
     {
         lex_impl_result r = lex_s(string, string + len - 64, user);
         p = r.out_at;
@@ -1203,7 +1295,7 @@ lex(char const* string, isize len, void* user)
             goto finalize;
         }
     }
-
+#endif /* __AVX2__ */
 
     if (LIKELY(len > 0))
     {
