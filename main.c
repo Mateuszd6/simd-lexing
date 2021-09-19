@@ -118,7 +118,7 @@ main(int argc, char** argv)
     char* fname = argv[1];
 
 #ifdef BENCH
-#  define REPEAT (128)
+#  define REPEAT (256)
     timer t = {0};
     for (int i = 0; i < REPEAT; ++i)
 #endif

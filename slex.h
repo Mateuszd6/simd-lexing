@@ -1,7 +1,8 @@
 /* TODO: However, probably verify if the unicode is correct (like in simdjson?)
  * TODO: Lexing float better in SIMD code (can be way faster!)
+ * TODO: Use simd when advancing over floats
  * TODO: Add ability to add singlequote and backtick strings and maybe include
- *       dollars and single quotes in the ident
+ *       dollars and single quotes in the ident?
  * TODO: Prefix the API!
  */
 
@@ -284,8 +285,8 @@ lex_s(char const* string, char const* string_end, void* user)
     __m256i stray_char_3 = _mm256_set1_epi8(' ');
     __m256i stray_char_4 = _mm256_set1_epi8(127); /* DEL */
 
-    while (p < string_end)
 continue_outer:
+    while (p < string_end)
     {
         __m256i b_1 = _mm256_loadu_si256((__m256i const*) p);
         __m256i b_2 = _mm256_loadu_si256((__m256i const*) (p + sizeof(__m256i)));
@@ -409,13 +410,22 @@ continue_outer:
                 {
                     /* TODO: Copypaste, do the same in "slow mode" */
                     addidx++;
-                    for (;   ('0' <= *(p + addidx) && *(p + addidx) <= '9')
-                             || ('a' <= *(p + addidx) && *(p + addidx) <= 'z')
-                             || ('A' <= *(p + addidx) && *(p + addidx) <= 'Z')
-                             || *(p + addidx) == '.'; /* TODO: Handle the out-of-range */
+                    for (; p - carry_tok_len + addidx < string_end
+                             && (('0' <= *(p + addidx) && *(p + addidx) <= '9')
+                                 || ('a' <= *(p + addidx) && *(p + addidx) <= 'z')
+                                 || ('A' <= *(p + addidx) && *(p + addidx) <= 'Z')
+                                 || *(p + addidx) == '.');
                          addidx++)
                     {
                         /* NOP */
+                    }
+
+                    if (UNLIKELY(p - carry_tok_len + addidx >= string_end))
+                    {
+                        p -= carry_tok_len;
+
+                        /* Will break out of the loop and will be reported in the "slow" */
+                        goto continue_outer;
                     }
 
                     ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, T_FLOAT,
@@ -516,14 +526,26 @@ continue_outer:
                     i32 tok_type = ('0' <= x[0] && x[0] <= '9') ? T_INTEGER : T_IDENT;
                     if (tok_type == T_INTEGER && UNLIKELY(x[wsidx - idx] == '.'))
                     {
-                        wsidx++;
-                        for (;   ('0' <= x[wsidx - idx] && x[wsidx - idx] <= '9')
-                              || ('a' <= x[wsidx - idx] && x[wsidx - idx] <= 'z')
-                              || ('A' <= x[wsidx - idx] && x[wsidx - idx] <= 'Z')
-                              || x[wsidx - idx] == '.'; /* TODO: Handle the out-of-range */
+                        i32 old_wsidx = wsidx++;
+                        for (; x + wsidx - idx < string_end
+                                 && (('0' <= x[wsidx - idx] && x[wsidx - idx] <= '9')
+                                     || ('a' <= x[wsidx - idx] && x[wsidx - idx] <= 'z')
+                                     || ('A' <= x[wsidx - idx] && x[wsidx - idx] <= 'Z')
+                                     || x[wsidx - idx] == '.');
                              wsidx++)
                         {
                             /* NOP */
+                        }
+
+                        if (UNLIKELY(x + wsidx - idx >= string_end))
+                        {
+                            /* TODO: Make sure these are calculated properly! */
+                            carry = CARRY_NONE;
+                            curr_idx += old_wsidx;
+                            p = x;
+
+                            /* Will break out of the loop and will be reported in the "slow" */
+                            goto continue_outer;
                         }
 
                         ON_TOKEN_CB(x, wsidx - idx, T_FLOAT, curr_line, curr_idx + idx, user);
