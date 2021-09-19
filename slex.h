@@ -160,6 +160,13 @@ typedef ptrdiff_t isize;
 #define TOK_BYTEMASK(X) ((X) < (1 << 8) ? 0xFF : ((X) < (1 << 16) ? 0xFFFF : 0xFFFFFF))
 #define TOK_NBYTES(X) ((X) < (1 << 8) ? 1 : ((X) < (1 << 16) ? 2 : 3))
 
+#define CALL_USER(STR, LEN, TYPE, LINE, IDX, USER)                             \
+    do {                                                                       \
+        int user_error = ON_TOKEN_CB(STR, LEN, TYPE, LINE, IDX, USER);         \
+        if (UNLIKELY(user_error) != 0)                                         \
+            goto err_user;                                                     \
+    } while (0)
+
 enum carry
 {
     CARRY_NONE = 0,
@@ -184,6 +191,7 @@ enum lex_error
     ERR_NEWLINE_IN_STRING = 5, /* LF char without backslash in string */
     ERR_EOF_AT_COMMENT = 6, /* EOF without ending a comment */
     ERR_EOF_AT_STRING = 7, /* EOF without ending a string */
+    ERR_USER = 8, /* Error in user callback */
 };
 
 char const* lex_error_str[] = {
@@ -428,7 +436,7 @@ continue_outer:
                         goto continue_outer;
                     }
 
-                    ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, T_FLOAT,
+                    CALL_USER(p - carry_tok_len, carry_tok_len + addidx, T_FLOAT,
                                 curr_line, curr_idx - carry_tok_len, user);
                     carry = CARRY_NONE;
                     curr_idx += addidx;
@@ -436,7 +444,7 @@ continue_outer:
                     goto continue_outer;
                 }
 
-                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len + addidx, tok_type,
+                CALL_USER(p - carry_tok_len, carry_tok_len + addidx, tok_type,
                             curr_line, curr_idx - carry_tok_len, user);
             }
             else
@@ -548,14 +556,14 @@ continue_outer:
                             goto continue_outer;
                         }
 
-                        ON_TOKEN_CB(x, wsidx - idx, T_FLOAT, curr_line, curr_idx + idx, user);
+                        CALL_USER(x, wsidx - idx, T_FLOAT, curr_line, curr_idx + idx, user);
                         carry = CARRY_NONE;
                         curr_idx += wsidx;
                         p = x + wsidx - idx;
                         goto continue_outer;
                     }
 
-                    ON_TOKEN_CB(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
+                    CALL_USER(x, wsidx - idx, tok_type, curr_line, curr_idx + idx, user);
                 }
                 else
                 {
@@ -615,7 +623,7 @@ continue_outer:
                             }
 
                             p = x + mask_idx + 1;
-                            ON_TOKEN_CB(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
+                            CALL_USER(strstart + 1, p - strstart - 2, T_DOUBLEQ_STR,
                                         str_start_line, str_start_idx, user);
                             curr_idx += mask_idx + 1 - nl_offset;
                             carry = CARRY_NONE;
@@ -680,7 +688,7 @@ continue_outer:
                     goto err_bad_char_literal;
                 }
 
-                ON_TOKEN_CB(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
+                CALL_USER(x + 1, skip_idx - 1, T_CHAR, curr_line, curr_idx + idx, user);
                 u64 skip_mask = (((u64) 1) << (skip_idx + 1)) - 2;
                 if (idx + skip_idx >= 64)
                 {
@@ -885,7 +893,7 @@ repeat_nl_seek:
                 {
                     if (0 ALLOWED_TOK3)
                     {
-                        ON_TOKEN_CB(x, 3, T_OP, curr_line, curr_idx + idx, user);
+                        CALL_USER(x, 3, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 2;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -901,7 +909,7 @@ repeat_nl_seek:
                     }
                     else if (0 ALLOWED_TOK2)
                     {
-                        ON_TOKEN_CB(x, 2, T_OP, curr_line, curr_idx + idx, user);
+                        CALL_USER(x, 2, T_OP, curr_line, curr_idx + idx, user);
 
                         u64 skip_idx = 1;
                         u64 skip_mask = ((u64)1 << (skip_idx + 1)) - 2;
@@ -917,7 +925,7 @@ repeat_nl_seek:
                     }
                 }
 
-                ON_TOKEN_CB(x, 1, T_OP, curr_line, curr_idx + idx, user);
+                CALL_USER(x, 1, T_OP, curr_line, curr_idx + idx, user);
             }
         }
 
@@ -949,6 +957,10 @@ err_bad_char_literal:
 
 err_newline_in_string:
     error = ERR_NEWLINE_IN_STRING;
+    goto finalize;
+
+err_user:
+    error = ERR_USER;
     goto finalize;
 }
 #endif /* __AVX2__ */
@@ -1003,14 +1015,14 @@ lex_small(char const* string, char const* string_end,
 
         if (0 ALLOWED_TOK3)
         {
-            ON_TOKEN_CB(p - 1, 3, T_OP, line, idx, user);
+            CALL_USER(p - 1, 3, T_OP, line, idx, user);
             p += 2;
             idx += 3;
             continue;
         }
         else if (0 ALLOWED_TOK2)
         {
-            ON_TOKEN_CB(p - 1, 2, T_OP, line, idx, user);
+            CALL_USER(p - 1, 2, T_OP, line, idx, user);
             p += 1;
             idx += 2;
             continue;
@@ -1060,7 +1072,7 @@ lex_small(char const* string, char const* string_end,
                 goto finalize;
             }
 
-            ON_TOKEN_CB(p, skip_idx - 1, T_CHAR, line, idx, user);
+            CALL_USER(p, skip_idx - 1, T_CHAR, line, idx, user);
             p += skip_idx;
             idx += skip_idx + 1;
             continue;
@@ -1081,7 +1093,7 @@ lex_small(char const* string, char const* string_end,
         }
         else
         {
-            ON_TOKEN_CB(p - 1, 1, T_OP, line, idx, user);
+            CALL_USER(p - 1, 1, T_OP, line, idx, user);
             idx++;
             continue;
         }
@@ -1134,9 +1146,9 @@ repeat_string_end_seek:
             idx++;
             p++;
 
-            ON_TOKEN_CB(p - more - 1, more,
-                        T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
-                        in_string_line, in_string_idx, user);
+            CALL_USER(p - more - 1, more,
+                      T_DOUBLEQ_STR/* TODO: Support other kinds of strings!*/,
+                      in_string_line, in_string_idx, user);
         } break;
         case IN_SHORT_COMMENT:
         {
@@ -1230,13 +1242,13 @@ in_ident:
                     /* NOP */
                 }
 
-                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, T_FLOAT, line, idx - carry_tok_len, user);
+                CALL_USER(p - carry_tok_len, carry_tok_len, T_FLOAT, line, idx - carry_tok_len, user);
                 carry = CARRY_NONE;
             }
             else
             {
-                ON_TOKEN_CB(p - carry_tok_len, carry_tok_len, tok_type,
-                            line, idx - carry_tok_len, user);
+                CALL_USER(p - carry_tok_len, carry_tok_len, tok_type,
+                          line, idx - carry_tok_len, user);
             }
         } break;
         default: NOTREACHED;
@@ -1252,6 +1264,10 @@ finalize:
 
         return retval;
     }
+
+err_user:
+    err = ERR_USER;
+    goto finalize;
 }
 
 lex_result

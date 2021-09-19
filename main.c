@@ -16,7 +16,7 @@
 
 #include "timer.h"
 
-static inline void
+static inline int
 tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
 /* Define all things that the lexer needs: */
@@ -52,7 +52,7 @@ static long n_long_comments = 0;
 
 #include "slex.h"
 
-static inline void
+static inline int
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 {
     char const* f = (char const*) user;
@@ -97,6 +97,8 @@ tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
 #if PRINT_TOKENS
     printf("%s:%d:%d: TOK %d (L = %d): \"%.*s\"\n", f, line, idx, type, len, len, str);
 #endif
+
+    return 0;
 }
 
 #if USE_MMAP
