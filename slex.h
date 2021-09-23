@@ -1071,9 +1071,9 @@ lex_small(char const* string, char const* string_end,
                 goto finalize;
             }
 
-            CALL_USER(p, skip_idx - 1, T_CHAR, line, idx, user);
+            CALL_USER(p, (int)(skip_idx - 1), T_CHAR, line, idx, user);
             p += skip_idx;
-            idx += skip_idx + 1;
+            idx += (int)(skip_idx + 1);
             continue;
         }
         else if ((w & single_comment_bmask) == SINGLELINE_COMMENT_START)
@@ -1305,7 +1305,9 @@ lex(char const* string, isize len, void* user)
         return lex_small(p, string + len, carry, curr_line, curr_idx, carry_tok_len, user);
     }
 
+#ifdef __AVX2__
 finalize:
+#endif /* __AVX2__ */
     {
         lex_result retval;
         retval.err = err;

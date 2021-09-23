@@ -2,11 +2,6 @@
 #  define USE_MMAP 1
 #endif
 
-#ifdef _MSC_VER
-#  define _CRT_SECURE_NO_DEPRECATE
-#  define _CRT_SECURE_NO_WARNINGS
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -161,7 +156,7 @@ on_token_cb(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
             int pw = 1;
             for (int i = 1; i < len; ++i, pw *= 8)
                 ret += (str[len - i] - '0') * pw;
-            t.u.ch_val = ret;
+            t.u.ch_val = (char)ret;
         }
         else
         {

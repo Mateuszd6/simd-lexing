@@ -2,7 +2,9 @@
 #define TIMER_H_
 
 #include <time.h>
-#include <unistd.h>
+#ifdef __linux__
+#  include <unistd.h>
+#endif
 
 typedef struct timer timer;
 struct timer
@@ -29,6 +31,21 @@ timer_diff(timer* t)
 
     return (long)temp.tv_sec * 1000000000 + temp.tv_nsec;
 }
+
+#ifdef _MSC_VER
+#define CLOCK_PROCESS_CPUTIME_ID 1
+#include "windows.h"
+int clock_gettime(int ignore, struct timespec *spec)
+{  
+    __int64 wintime; 
+    (void) ignore;
+    GetSystemTimeAsFileTime((FILETIME*)&wintime);
+    wintime -=116444736000000000i64;
+    spec->tv_sec = wintime / 10000000i64;
+    spec->tv_nsec = wintime % 10000000i64 *100;
+    return 0;
+}
+#endif /* _MSC_VER */
 
 #define TIMER_INIT(TIMER) (TIMER).elapsed = 0
 
