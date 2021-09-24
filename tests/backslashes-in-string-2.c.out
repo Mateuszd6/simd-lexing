@@ -37,4 +37,4 @@ which has backslashes and newlines to make sure it calculates\
 \
 ne numbers and stuff. Hello cruel world!"
 ../tests/backslashes-in-string-2.c:16:42: TOK 1 (L = 1): ";"
-Parsed: 17 lines, 19 ids, 1 strings, 0 chars, 0 ints, 0 hex,   0 floats,    0 //s, 1 /**/s,   0 #foo
+Parsed: 17 lines, 19 ids, 1 strings, 0 chars, 0 ints, 0 hex,   0 floats

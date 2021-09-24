@@ -58,4 +58,4 @@
 ../tests/short-comment-in-same-buf2.c:16:61: TOK 0 (L = 4): "long"
 ../tests/short-comment-in-same-buf2.c:16:66: TOK 0 (L = 4): "long"
 ../tests/short-comment-in-same-buf2.c:16:71: TOK 0 (L = 4): "long"
-Parsed: 17 lines, 60 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats,    7 //s, 0 /**/s,   0 #foo
+Parsed: 17 lines, 60 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats

@@ -37,4 +37,4 @@
 ../tests/stray-characters.c:10:66: TOK 0 (L = 4): "long"
 ../tests/stray-characters.c:10:71: TOK 0 (L = 4): "long"
 ../tests/stray-characters.c:10:76: TOK 0 (L = 4): "long"
-Parsed: 11 lines, 35 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 11 lines, 35 ids, 0 strings, 0 chars, 0 ints, 0 hex,   0 floats

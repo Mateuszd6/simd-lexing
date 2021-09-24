@@ -2,4 +2,4 @@
 ../tests/float-at-the-end.c:1:7: TOK 0 (L = 6): "foobar"
 ../tests/float-at-the-end.c:1:14: TOK 1 (L = 1): "="
 ../tests/float-at-the-end.c:1:16: TOK 3 (L = 14): "123.3123213213"
-Parsed: 1 lines, 2 ids, 0 strings, 0 chars, 0 ints, 0 hex,   1 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 1 lines, 2 ids, 0 strings, 0 chars, 0 ints, 0 hex,   1 floats

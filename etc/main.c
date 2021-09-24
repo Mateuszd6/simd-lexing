@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* TODO: Remove this when done */
 #include <assert.h>
 #define ASSERT assert
 
@@ -36,16 +35,13 @@ tok_print(char const* str, int len, int type, int line, int idx, void* user);
 
 #define ON_TOKEN_CB tok_print
 
-/* TODO: Move them below the #include! */
+#include "../slex.h"
+
 static long n_parsed_idents = 0;
 static long n_parsed_numbers = 0;
 static long n_parsed_floats = 0;
 static long n_parsed_strings = 0;
 static long n_parsed_chars = 0;
-static long n_single_comments = 0; /* TODO: Remove them at the end? */
-static long n_long_comments = 0;
-
-#include "../slex.h"
 
 static inline int
 tok_print(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
@@ -142,7 +138,7 @@ main(int argc, char** argv)
         }
 
         struct stat st;
-        fstat(fd, &st); /* Get the size of the file. */ /* TODO: Check retval of stat and fail */
+        fstat(fd, &st); /* Get the size of the file. */
         isize fsize = st.st_size;
         char* string = (char*) mmap(0, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
 #endif
@@ -172,11 +168,9 @@ main(int argc, char** argv)
 #ifndef BENCH
         fprintf(stdout, "Parsed: "
                 "%d lines, %ld ids, %ld strings, "
-                "%ld chars, %ld ints, %ld hex,   %ld floats,    "
-                "%ld //s, %ld /**/s,   0 #foo\n",
+                "%ld chars, %ld ints, %ld hex,   %ld floats\n",
                 r.curr_line, n_parsed_idents, n_parsed_strings,
-                n_parsed_chars, n_parsed_numbers, 0L, n_parsed_floats,
-                n_single_comments, n_long_comments);
+                n_parsed_chars, n_parsed_numbers, 0L, n_parsed_floats);
 #endif
     }
 

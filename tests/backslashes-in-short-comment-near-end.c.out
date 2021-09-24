@@ -35,4 +35,4 @@
 ../tests/backslashes-in-short-comment-near-end.c:17:1: TOK 0 (L = 6): "foobar"
 ../tests/backslashes-in-short-comment-near-end.c:17:8: TOK 1 (L = 2): "<="
 ../tests/backslashes-in-short-comment-near-end.c:17:11: TOK 2 (L = 1): "0"
-Parsed: 18 lines, 20 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats,    1 //s, 1 /**/s,   0 #foo
+Parsed: 18 lines, 20 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats

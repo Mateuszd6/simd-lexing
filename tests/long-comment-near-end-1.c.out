@@ -86,4 +86,4 @@
 ../tests/long-comment-near-end-1.c:23:61: TOK 0 (L = 4): "char"
 ../tests/long-comment-near-end-1.c:23:173: TOK 0 (L = 5): "hello"
 ../tests/long-comment-near-end-1.c:23:179: TOK 0 (L = 4): "char"
-Parsed: 24 lines, 46 ids, 1 strings, 0 chars, 1 ints, 0 hex,   0 floats,    1 //s, 3 /**/s,   0 #foo
+Parsed: 24 lines, 46 ids, 1 strings, 0 chars, 1 ints, 0 hex,   0 floats

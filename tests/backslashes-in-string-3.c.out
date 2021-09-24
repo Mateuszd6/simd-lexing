@@ -93,4 +93,4 @@ line numbers and stuff. Hello cruel world!"
 ../tests/backslashes-in-string-3.c:20:64: TOK 1 (L = 1): ";"
 ../tests/backslashes-in-string-3.c:21:1: TOK 1 (L = 1): "}"
 ../tests/backslashes-in-string-3.c:21:2: TOK 1 (L = 1): ";"
-Parsed: 22 lines, 70 ids, 2 strings, 0 chars, 0 ints, 0 hex,   0 floats,    0 //s, 1 /**/s,   0 #foo
+Parsed: 22 lines, 70 ids, 2 strings, 0 chars, 0 ints, 0 hex,   0 floats

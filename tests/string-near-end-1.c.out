@@ -87,4 +87,4 @@
 ../tests/string-near-end-1.c:23:71: TOK 5 (L = 102): " trolololololololo(void){ return qoiej qweoijqweo jqw eoiqj weoiqj eoiqjw         RANDOM_EXTENSION; } "
 ../tests/string-near-end-1.c:23:175: TOK 0 (L = 5): "hello"
 ../tests/string-near-end-1.c:23:181: TOK 0 (L = 4): "char"
-Parsed: 24 lines, 46 ids, 2 strings, 0 chars, 1 ints, 0 hex,   0 floats,    1 //s, 2 /**/s,   0 #foo
+Parsed: 24 lines, 46 ids, 2 strings, 0 chars, 1 ints, 0 hex,   0 floats

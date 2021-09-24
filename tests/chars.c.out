@@ -167,4 +167,4 @@
 ../tests/chars.c:22:12: TOK 0 (L = 1): "q"
 ../tests/chars.c:22:13: TOK 1 (L = 1): ";"
 ../tests/chars.c:23:1: TOK 1 (L = 1): "}"
-Parsed: 24 lines, 74 ids, 1 strings, 8 chars, 11 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 24 lines, 74 ids, 1 strings, 8 chars, 11 ints, 0 hex,   0 floats

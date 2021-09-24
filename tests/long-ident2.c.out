@@ -103,4 +103,4 @@
 ../tests/long-ident2.c:9:10: TOK 2 (L = 1): "0"
 ../tests/long-ident2.c:9:11: TOK 1 (L = 1): ";"
 ../tests/long-ident2.c:9:13: TOK 1 (L = 1): "}"
-Parsed: 10 lines, 99 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 10 lines, 99 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats

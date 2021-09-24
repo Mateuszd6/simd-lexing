@@ -108,4 +108,4 @@
 ../tests/long-ident.c:14:6: TOK 1 (L = 1): ")"
 ../tests/long-ident.c:14:7: TOK 1 (L = 1): "{"
 ../tests/long-ident.c:14:8: TOK 1 (L = 1): "}"
-Parsed: 15 lines, 100 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 15 lines, 100 ids, 0 strings, 0 chars, 1 ints, 0 hex,   0 floats

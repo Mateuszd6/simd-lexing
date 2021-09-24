@@ -285,4 +285,4 @@
 ../tests/operators.c:22:12: TOK 0 (L = 1): "q"
 ../tests/operators.c:22:13: TOK 1 (L = 1): ";"
 ../tests/operators.c:23:1: TOK 1 (L = 1): "}"
-Parsed: 24 lines, 92 ids, 0 strings, 0 chars, 9 ints, 0 hex,   0 floats,    0 //s, 0 /**/s,   0 #foo
+Parsed: 24 lines, 92 ids, 0 strings, 0 chars, 9 ints, 0 hex,   0 floats

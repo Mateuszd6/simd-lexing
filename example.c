@@ -34,10 +34,6 @@ on_token_cb(char const* str, int len, int type, int line, int idx, void* user);
 
 #define ON_TOKEN_CB on_token_cb
 
-/* TODO: REMOVE THEM FROM HERE! */
-static long n_single_comments = 0;
-static long n_long_comments = 0;
-
 #include "slex.h"
 
 #include <stdint.h>
@@ -138,7 +134,7 @@ on_token_cb(char const* str, i32 len, i32 type, i32 line, i32 idx, void* user)
             switch (str[1]) {
             case ('a'): t.u.ch_val = '\a'; break;
             case ('b'): t.u.ch_val = '\b'; break;
-            case ('e'): t.u.ch_val = '\e'; break;
+            case ('e'): t.u.ch_val = 0x1b /* '\e */; break;
             case ('f'): t.u.ch_val = '\f'; break;
             case ('n'): t.u.ch_val = '\n'; break;
             case ('r'): t.u.ch_val = '\r'; break;

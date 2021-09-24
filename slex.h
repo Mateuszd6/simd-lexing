@@ -144,11 +144,6 @@ typedef ptrdiff_t isize;
 #  define NOOPTIMIZE(EXPR) ((void) 0)
 #endif
 
-/* TODO: Remove!! */
-#if PRINT_LINES
-#  include <stdio.h>
-#endif
-
 #define TOK1(X) ((u32) X)
 #define TOK2(X, Y) (((u32) X) | ((u32) Y) << 8)
 #define TOK3(X, Y, Z) (((u32) X) | ((u32) Y) << 8 | ((u32) Z) << 16)
@@ -463,37 +458,6 @@ continue_outer:
         carry = ((fixup_mmask & ((u64)1 << 63)) != 0);
         /* Based on some real code, CARRY_IDENT happens in ~78% cases */
 
-#if PRINT_LINES
-        {
-            printf("|");
-            for (int i = 0; i < 64; ++i)
-                printf("%d", i % 10);
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 64; ++i)
-            {
-                if (p[i] == '\n' || p[i] == '\t') printf(" ");
-                else if (!p[i]) printf(" ");
-                else printf("%c", p[i]);
-            }
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 64; ++i)
-            {
-                if (common_mmask & ((u64)1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-            printf("|");
-            for (int i = 0; i < 64; ++i)
-            {
-                if (stray_mmask & ((u64)1 << i)) printf("*");
-                else printf(" ");
-            }
-            printf("|\n");
-        }
-#endif
-
         while (s)
         {
             i32 idx = ctz64(s);
@@ -712,7 +676,6 @@ continue_outer:
                 u32 multi_comment_bmask = TOK_BYTEMASK(MULTILINE_COMMENT_START);
 
                 u32 w = U32_LOADU(x);
-                u32 w1 = w & 0xFF;
                 u32 w2 = w & 0xFFFF;
                 u32 w3 = w & 0xFFFFFF;
 
@@ -731,7 +694,6 @@ continue_outer:
                         }
 
                         s &= ~(((u64)1 << comment_end_idx) - 1);
-                        n_single_comments++;
                         continue;
                     }
 
@@ -752,24 +714,6 @@ skip_long:
 
                             goto finalize;
                         }
-
-#if PRINT_LINES
-                        {
-                            printf("|");
-                            for (int i = 0; i < 32; ++i)
-                                printf("%d", i % 10);
-                            printf("|\n");
-                            printf("|");
-                            for (int i = 0; i < 32; ++i)
-                            {
-                                if (p[i] == '\n') printf(" ");
-                                else if (!p[i]) printf(" ");
-                                else printf("%c", p[i]);
-                            }
-                            printf("|\n");
-                            printf("\n");
-                        }
-#endif
 
                         __m256i cbuf = _mm256_loadu_si256((__m256i*) p);
                         __m256i cbuf_n = _mm256_cmpeq_epi8(cbuf, cmpmask_newline);
@@ -799,7 +743,6 @@ repeat_nl_seek:
                     curr_line++;
                     curr_idx = 1;
                     carry = CARRY_NONE;
-                    n_single_comments++;
                     goto continue_outer;
                 }
                 else if ((w & multi_comment_bmask) == MULTILINE_COMMENT_START)
@@ -834,24 +777,6 @@ repeat_nl_seek:
                         u32 cb_nl_mm = _mm256_movemask_epi8(cb_nl);
                         u32 m1 = cb_mm_1 & 0xAAAAAAAA; /* 10101010... */
                         u32 m2 = cb_mm_2 & 0x55555555; /* 01010101... */
-#if PRINT_LINES
-                        {
-                            printf("|");
-                            for (int i = 0; i < 32; ++i)
-                                printf("%d", i % 10);
-                            printf("|\n");
-                            printf("|");
-                            for (int i = 0; i < 32; ++i)
-                            {
-                                if (p[i] == '\n') printf(" ");
-                                else if (!p[i]) printf(" ");
-                                else printf("%c", p[i]);
-                            }
-                            printf("|\n");
-                            printf("\n");
-                        }
-#endif
-
                         u32 cb_mm = m1 | (m2 << 1);
                         if (cb_mm)
                         {
@@ -887,7 +812,6 @@ repeat_nl_seek:
                     }
 
                     carry = CARRY_NONE;
-                    n_long_comments++;
                     goto continue_outer;
                 }
                 else if (size_ge_2)
@@ -1176,7 +1100,6 @@ repeat_string_end_seek:
             line++;
             idx = 1;
             p++;
-            n_single_comments++;
         } break;
         case IN_LONG_COMMENT:
         {
@@ -1213,7 +1136,6 @@ repeat_string_end_seek:
 
             idx += 2;
             p += 2;
-            n_long_comments++;
         } break;
         case IN_IDENT:
 in_ident:
@@ -1299,9 +1221,6 @@ lex(char const* string, isize len, void* user)
 
     if (LIKELY(len > 0))
     {
-#if PRINT_LINES
-        printf("----------------------------------------------------------------\n");
-#endif
         return lex_small(p, string + len, carry, curr_line, curr_idx, carry_tok_len, user);
     }
 
